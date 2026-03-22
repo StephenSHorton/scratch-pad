@@ -15,11 +15,11 @@
 			<h1>Scratch Pad</h1>
 			<p class="tagline">Desktop notes for Claude Code</p>
 			<p class="subtitle">Floating sticky notes that Claude can read and write. Leave yourself context between sessions. See your plans on screen.</p>
-			<div class="download-buttons">
-				<a href="https://github.com/StephenSHorton/scratch-pad/releases/latest" class="btn btn-primary">Download for macOS</a>
+			<div class="download-buttons" id="download-buttons">
+				<a href="https://github.com/StephenSHorton/scratch-pad/releases/latest" class="btn btn-primary" id="download-primary">Download for macOS</a>
 				<a href="https://github.com/StephenSHorton/scratch-pad" class="btn btn-secondary">View on GitHub</a>
 			</div>
-			<p class="platform-note">macOS 10.15+ &middot; Apple Silicon &amp; Intel &middot; Free &amp; open source</p>
+			<p class="platform-note" id="platform-note">macOS 10.15+ &middot; Apple Silicon &amp; Intel &middot; Free &amp; open source</p>
 		</section>
 
 		<section class="features">
@@ -116,5 +116,46 @@
 			</p>
 		</footer>
 	</main>
+	<script>
+		(async () => {
+			const btn = document.getElementById("download-primary");
+			const note = document.getElementById("platform-note");
+			const buttons = document.getElementById("download-buttons");
+
+			try {
+				const res = await fetch("https://api.github.com/repos/StephenSHorton/scratch-pad/releases/latest");
+				if (!res.ok) return;
+				const release = await res.json();
+
+				const dmgs = release.assets.filter(a => a.name.endsWith(".dmg"));
+				const arm = dmgs.find(a => a.name.includes("aarch64"));
+				const intel = dmgs.find(a => a.name.includes("x64"));
+				if (!arm || !intel) return;
+
+				const isArm = navigator.userAgent.includes("ARM") ||
+					(navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1) ||
+					navigator.userAgent.includes("Mac") && !navigator.userAgent.includes("Intel");
+
+				const primary = isArm ? arm : intel;
+				const secondary = isArm ? intel : arm;
+				const primaryLabel = isArm ? "Apple Silicon" : "Intel";
+				const secondaryLabel = isArm ? "Intel" : "Apple Silicon";
+				const version = release.tag_name;
+
+				btn.href = primary.browser_download_url;
+				btn.textContent = `Download for ${primaryLabel}`;
+
+				const altLink = document.createElement("a");
+				altLink.href = secondary.browser_download_url;
+				altLink.className = "btn btn-secondary";
+				altLink.textContent = `Download for ${secondaryLabel}`;
+				buttons.insertBefore(altLink, buttons.querySelector(".btn-secondary"));
+
+				note.innerHTML = `${version} &middot; macOS 10.15+ &middot; Free &amp; open source`;
+			} catch {
+				// Fall back to the static GitHub releases link
+			}
+		})();
+	</script>
 </body>
 </html>
