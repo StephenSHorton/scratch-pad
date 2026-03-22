@@ -23,29 +23,34 @@ jobs:
       - name: Build MCP sidecar
         run: cd mcp-server && bun build --compile --minify --target=bun-darwin-arm64 src/index.ts --outfile ../src-tauri/binaries/scratch-pad-mcp-aarch64-apple-darwin
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'Scratch Pad ${{ github.ref_name }}'
-          releaseBody: 'See the assets below to download and install.'
-          releaseDraft: true
-          prerelease: false
-          args: --target aarch64-apple-darwin
+        run: bun tauri build --target aarch64-apple-darwin
       - name: Read signature
         id: sig
         run: |
-          SIG_FILE=$(find . -name "*.app.tar.gz.sig" -type f 2>/dev/null | head -1)
-          if [ -n "$SIG_FILE" ]; then
+          SIG_FILE="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Scratch Pad.app.tar.gz.sig"
+          if [ -f "$SIG_FILE" ]; then
             echo "sig=$(cat "$SIG_FILE")" >> $GITHUB_OUTPUT
           else
-            echo "No .sig file found!"
-            find . -name "*.sig" -type f 2>/dev/null
+            echo "Sig file not at expected path, searching..."
+            find src-tauri/target -name "*.sig" -type f 2>/dev/null
             exit 1
           fi
+      - name: Upload artifacts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          # Create draft release if it doesn't exist
+          gh release create "$TAG" --draft --title "Scratch Pad $TAG" --notes "See the assets below to download and install." 2>/dev/null || true
+          # Upload assets
+          cp "src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Scratch Pad.app.tar.gz" "Scratch.Pad_aarch64.app.tar.gz"
+          gh release upload "$TAG" \
+            "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Scratch Pad_$(echo $TAG | sed 's/^v//')_aarch64.dmg" \
+            "Scratch.Pad_aarch64.app.tar.gz" \
+            --clobber
 
   build-x64:
     runs-on: macos-latest
@@ -64,29 +69,32 @@ jobs:
       - name: Build MCP sidecar
         run: cd mcp-server && bun build --compile --minify --target=bun-darwin-x64 src/index.ts --outfile ../src-tauri/binaries/scratch-pad-mcp-x86_64-apple-darwin
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: 'Scratch Pad ${{ github.ref_name }}'
-          releaseBody: 'See the assets below to download and install.'
-          releaseDraft: true
-          prerelease: false
-          args: --target x86_64-apple-darwin
+        run: bun tauri build --target x86_64-apple-darwin
       - name: Read signature
         id: sig
         run: |
-          SIG_FILE=$(find . -name "*.app.tar.gz.sig" -type f 2>/dev/null | head -1)
-          if [ -n "$SIG_FILE" ]; then
+          SIG_FILE="src-tauri/target/x86_64-apple-darwin/release/bundle/macos/Scratch Pad.app.tar.gz.sig"
+          if [ -f "$SIG_FILE" ]; then
             echo "sig=$(cat "$SIG_FILE")" >> $GITHUB_OUTPUT
           else
-            echo "No .sig file found!"
-            find . -name "*.sig" -type f 2>/dev/null
+            echo "Sig file not at expected path, searching..."
+            find src-tauri/target -name "*.sig" -type f 2>/dev/null
             exit 1
           fi
+      - name: Upload artifacts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          gh release create "$TAG" --draft --title "Scratch Pad $TAG" --notes "See the assets below to download and install." 2>/dev/null || true
+          cp "src-tauri/target/x86_64-apple-darwin/release/bundle/macos/Scratch Pad.app.tar.gz" "Scratch.Pad_x64.app.tar.gz"
+          gh release upload "$TAG" \
+            "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Scratch Pad_$(echo $TAG | sed 's/^v//')_x64.dmg" \
+            "Scratch.Pad_x64.app.tar.gz" \
+            --clobber
 
   updater:
     needs: [build-aarch64, build-x64]
