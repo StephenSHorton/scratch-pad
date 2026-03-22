@@ -8,8 +8,6 @@ on:
 jobs:
   build-aarch64:
     runs-on: macos-latest
-    outputs:
-      sig: ${{ steps.sig.outputs.sig }}
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -23,39 +21,21 @@ jobs:
       - name: Build MCP sidecar
         run: cd mcp-server && bun build --compile --minify --target=bun-darwin-arm64 src/index.ts --outfile ../src-tauri/binaries/scratch-pad-mcp-aarch64-apple-darwin
       - name: Build Tauri app
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: bun tauri build --target aarch64-apple-darwin
-      - name: Read signature
-        id: sig
-        run: |
-          SIG_FILE="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Scratch Pad.app.tar.gz.sig"
-          if [ -f "$SIG_FILE" ]; then
-            echo "sig=$(cat "$SIG_FILE")" >> $GITHUB_OUTPUT
-          else
-            echo "Sig file not at expected path, searching..."
-            find src-tauri/target -name "*.sig" -type f 2>/dev/null
-            exit 1
-          fi
-      - name: Upload artifacts
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="${GITHUB_REF_NAME}"
-          # Create draft release if it doesn't exist
-          gh release create "$TAG" --draft --title "Scratch Pad $TAG" --notes "See the assets below to download and install." 2>/dev/null || true
-          # Upload assets
-          cp "src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Scratch Pad.app.tar.gz" "Scratch.Pad_aarch64.app.tar.gz"
-          gh release upload "$TAG" \
-            "src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Scratch Pad_$(echo $TAG | sed 's/^v//')_aarch64.dmg" \
-            "Scratch.Pad_aarch64.app.tar.gz" \
-            --clobber
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Scratch Pad ${{ github.ref_name }}'
+          releaseBody: 'See the assets below to download and install.'
+          releaseDraft: true
+          prerelease: false
+          args: --target aarch64-apple-darwin
 
   build-x64:
     runs-on: macos-latest
-    outputs:
-      sig: ${{ steps.sig.outputs.sig }}
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -69,32 +49,18 @@ jobs:
       - name: Build MCP sidecar
         run: cd mcp-server && bun build --compile --minify --target=bun-darwin-x64 src/index.ts --outfile ../src-tauri/binaries/scratch-pad-mcp-x86_64-apple-darwin
       - name: Build Tauri app
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: bun tauri build --target x86_64-apple-darwin
-      - name: Read signature
-        id: sig
-        run: |
-          SIG_FILE="src-tauri/target/x86_64-apple-darwin/release/bundle/macos/Scratch Pad.app.tar.gz.sig"
-          if [ -f "$SIG_FILE" ]; then
-            echo "sig=$(cat "$SIG_FILE")" >> $GITHUB_OUTPUT
-          else
-            echo "Sig file not at expected path, searching..."
-            find src-tauri/target -name "*.sig" -type f 2>/dev/null
-            exit 1
-          fi
-      - name: Upload artifacts
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="${GITHUB_REF_NAME}"
-          gh release create "$TAG" --draft --title "Scratch Pad $TAG" --notes "See the assets below to download and install." 2>/dev/null || true
-          cp "src-tauri/target/x86_64-apple-darwin/release/bundle/macos/Scratch Pad.app.tar.gz" "Scratch.Pad_x64.app.tar.gz"
-          gh release upload "$TAG" \
-            "src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Scratch Pad_$(echo $TAG | sed 's/^v//')_x64.dmg" \
-            "Scratch.Pad_x64.app.tar.gz" \
-            --clobber
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Scratch Pad ${{ github.ref_name }}'
+          releaseBody: 'See the assets below to download and install.'
+          releaseDraft: true
+          prerelease: false
+          args: --target x86_64-apple-darwin
 
   updater:
     needs: [build-aarch64, build-x64]
@@ -102,24 +68,41 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Build and upload latest.json
+      - name: Install Rust (for cargo install tauri-cli signing)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install tauri-cli for signing
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: Download tar.gz bundles and sign them
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#v}"
           PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           REPO="https://github.com/${{ github.repository }}"
-          AARCH64_SIG="${{ needs.build-aarch64.outputs.sig }}"
-          X64_SIG="${{ needs.build-x64.outputs.sig }}"
+
+          # Download the tar.gz files from the release
+          mkdir -p bundles
+          gh release download "$TAG" --repo "${{ github.repository }}" --pattern "*.app.tar.gz" --dir bundles
+          echo "Downloaded bundles:"
+          ls -la bundles/
+
+          # Sign each bundle
+          cargo tauri signer sign bundles/Scratch.Pad_aarch64.app.tar.gz --private-key-path <(echo "$TAURI_SIGNING_PRIVATE_KEY") --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" 2>/dev/null || \
+          cargo tauri signer sign "bundles/Scratch.Pad_aarch64.app.tar.gz" -k "$TAURI_SIGNING_PRIVATE_KEY" -p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+
+          cargo tauri signer sign bundles/Scratch.Pad_x64.app.tar.gz --private-key-path <(echo "$TAURI_SIGNING_PRIVATE_KEY") --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" 2>/dev/null || \
+          cargo tauri signer sign "bundles/Scratch.Pad_x64.app.tar.gz" -k "$TAURI_SIGNING_PRIVATE_KEY" -p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+
+          AARCH64_SIG=$(cat bundles/Scratch.Pad_aarch64.app.tar.gz.sig)
+          X64_SIG=$(cat bundles/Scratch.Pad_x64.app.tar.gz.sig)
 
           echo "aarch64 sig length: ${#AARCH64_SIG}"
           echo "x64 sig length: ${#X64_SIG}"
-
-          if [ -z "$AARCH64_SIG" ] || [ -z "$X64_SIG" ]; then
-            echo "ERROR: Missing signatures!"
-            exit 1
-          fi
 
           cat > latest.json << EOF
           {
@@ -139,5 +122,7 @@ jobs:
           }
           EOF
 
+          echo "Generated latest.json:"
           cat latest.json
+
           gh release upload "${TAG}" latest.json --repo "${{ github.repository }}" --clobber
