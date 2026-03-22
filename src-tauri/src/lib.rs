@@ -375,12 +375,17 @@ pub fn run() {
                 let welcome = Note {
                     id: uuid::Uuid::new_v4().to_string(),
                     title: Some("Welcome to Scratch Pad".to_string()),
-                    body: "This is your scratch pad — a place for quick notes between sessions.\n\n\
-                           **How it works:**\n\
-                           - Ask Claude to *\"write that to a scratch pad\"*\n\
-                           - Notes appear as floating windows on your desktop\n\
-                           - Drag to move, click **\u{2715}** to dismiss\n\n\
-                           Claude can also read, update, and clear your scratch pads via MCP."
+                    body: "Floating desktop notes for Claude Code.\n\n\
+                           **Quick start:**\n\
+                           - Double-click text to edit\n\
+                           - Drag anywhere to move\n\
+                           - Click \u{2715} to delete\n\n\
+                           **Connect to Claude Code:**\n\
+                           ```\n\
+                           claude mcp add --transport stdio --scope user scratch-pad -- \"/Applications/Scratch Pad.app/Contents/MacOS/scratch-pad-mcp\"\n\
+                           ```\n\n\
+                           Then restart Claude Code and say:\n\
+                           *\"Write that to a scratch pad\"*"
                         .to_string(),
                     color: "yellow".to_string(),
                     created_at: chrono::Utc::now().to_rfc3339(),

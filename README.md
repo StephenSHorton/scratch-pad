@@ -1,81 +1,70 @@
-# Tauri + React + TypeScript + Vite
+# Scratch Pad
 
-This template should help get you started developing with Tauri, React and Typescript in Vite. The template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+**Desktop scratch pads for Claude Code**
 
-Currently, two official plugins are available:
+Floating desktop notes that Claude can create, read, update, and delete via MCP.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Features
 
+- Floating borderless notes on your desktop
+- Markdown rendering (headers, code blocks, lists, bold/italic)
+- Editable -- double-click to edit title or body
+- Color themes (yellow, pink, blue, green)
+- MCP server with 5 tools for Claude Code integration
+- Auto-updates via GitHub Releases
+- System tray icon
+- Launch on login
 
-## Recommended IDE Setup
+## Install
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+1. Download the latest `.dmg` from the [Releases](https://github.com/stephenhorton/scratch-pad/releases) page
+2. Drag to Applications
+3. On first launch, if macOS says "damaged", run:
 
-
-## React Compiler
-
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
-
-Note: This will impact Vite dev & build performances.
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+xattr -cr /Applications/Scratch\ Pad.app
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## MCP Setup for Claude Code
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+After installing, connect Claude Code to the bundled MCP server:
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+claude mcp add --transport stdio --scope user scratch-pad -- "/Applications/Scratch Pad.app/Contents/MacOS/scratch-pad-mcp"
 ```
+
+Then restart Claude Code. You'll have these tools available:
+
+| Tool | Description |
+| --- | --- |
+| `note_create` | Create a scratch pad (supports markdown) |
+| `note_list` | List all active scratch pads |
+| `note_read` | Read a specific scratch pad |
+| `note_update` | Update a scratch pad's content, title, or color |
+| `note_clear` | Delete one or all scratch pads |
+
+### Usage examples
+
+Just talk naturally:
+
+- "Write that to a scratch pad"
+- "Open a scratch pad and note down our plan"
+- "What's on my scratch pads?"
+- "Delete that last scratch pad"
+- "Update the scratch pad with the new approach"
+
+## Development
+
+```bash
+bun install
+cd mcp-server && bun install
+bun tauri dev
+```
+
+## Tech Stack
+
+Tauri v2, React 19, Vite 8, Tailwind v4, TypeScript, Rust
+
+## License
+
+MIT
