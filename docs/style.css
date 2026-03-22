@@ -311,17 +311,61 @@ footer a:hover {
 
 /* Responsive */
 
-@media (max-width: 600px) {
+@media (max-width: 768px) {
+	main {
+		padding: 0 20px;
+	}
+
 	.hero {
-		padding: 48px 0 40px;
+		padding: 56px 0 48px;
 	}
 
 	.hero h1 {
-		font-size: 2.25rem;
+		font-size: 2.5rem;
+	}
+
+	.tagline {
+		font-size: 1.1rem;
 	}
 
 	.subtitle {
 		font-size: 1rem;
+	}
+
+	.features,
+	.how-it-works,
+	.mcp-tools,
+	.install-notes {
+		padding: 36px 0;
+	}
+
+	.notice {
+		padding: 16px 20px;
+	}
+
+	pre {
+		padding: 10px 14px;
+		font-size: 0.8rem;
+	}
+}
+
+@media (max-width: 600px) {
+	.hero {
+		padding: 40px 0 36px;
+	}
+
+	.app-icon {
+		width: 96px;
+		height: 96px;
+	}
+
+	.hero h1 {
+		font-size: 2rem;
+	}
+
+	.subtitle {
+		font-size: 0.95rem;
+		margin-bottom: 24px;
 	}
 
 	.feature-grid,
@@ -331,12 +375,28 @@ footer a:hover {
 
 	.download-buttons {
 		flex-direction: column;
-		align-items: center;
+		align-items: stretch;
 	}
 
 	.btn {
-		width: 100%;
-		max-width: 280px;
 		text-align: center;
+	}
+
+	.how-it-works h2,
+	.mcp-tools h2,
+	.install-notes h2 {
+		font-size: 1.3rem;
+	}
+
+	pre {
+		border-radius: 6px;
+	}
+
+	pre code {
+		font-size: 0.75rem;
+	}
+
+	footer {
+		padding: 32px 0;
 	}
 }
