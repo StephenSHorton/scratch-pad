@@ -165,6 +165,7 @@ export const Route = createFileRoute("/")({
 
 function StickyNote() {
 	const [note, setNote] = useState<Note | null>(null);
+	const [confirmDelete, setConfirmDelete] = useState(false);
 
 	useEffect(() => {
 		const win = getCurrentWindow();
@@ -231,30 +232,95 @@ function StickyNote() {
 				position: "relative",
 			}}
 		>
-			{/* Dismiss button */}
-			<button
-				type="button"
-				onClick={() => invoke("dismiss_note", { id: note.id })}
+			{/* Top-right controls */}
+			<div
 				style={{
 					position: "absolute",
 					top: "8px",
 					right: "10px",
-					background: "none",
-					border: "none",
-					color: colors.dismiss,
-					fontSize: "18px",
-					cursor: "pointer",
-					lineHeight: 1,
-					padding: "2px 4px",
-					borderRadius: "4px",
-					opacity: 0.7,
-					transition: "opacity 0.15s",
+					display: "flex",
+					alignItems: "center",
+					gap: "4px",
 				}}
-				onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")}
-				onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.7")}
 			>
-				&#x2715;
-			</button>
+				{/* Color picker */}
+				<button
+					type="button"
+					onClick={() => {
+						const colorOrder: Note["color"][] = ["yellow", "pink", "blue", "green"];
+						const idx = colorOrder.indexOf(note.color);
+						const next = colorOrder[(idx + 1) % colorOrder.length];
+						invoke<Note | null>("update_note_color", { id: note.id, color: next }).then(
+							(updated) => {
+								if (updated) setNote(updated);
+							},
+						);
+					}}
+					style={{
+						background: "none",
+						border: "none",
+						cursor: "pointer",
+						padding: "2px",
+						opacity: 0.6,
+						transition: "opacity 0.15s",
+						display: "flex",
+						alignItems: "center",
+						gap: "2px",
+					}}
+					onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")}
+					onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.6")}
+				>
+					{(["yellow", "pink", "blue", "green"] as const)
+						.filter((c) => c !== note.color)
+						.map((c) => (
+							<span
+								key={c}
+								style={{
+									display: "inline-block",
+									width: "8px",
+									height: "8px",
+									borderRadius: "50%",
+									background: NOTE_COLORS[c].bg,
+									border: `1px solid ${NOTE_COLORS[c].dismiss}`,
+								}}
+							/>
+						))}
+				</button>
+
+				{/* Delete button — two-step: click once to confirm, click again to delete */}
+				<button
+					type="button"
+					onClick={() => {
+						if (confirmDelete) {
+							invoke("dismiss_note", { id: note.id });
+						} else {
+							setConfirmDelete(true);
+						}
+					}}
+					onBlur={() => setConfirmDelete(false)}
+					style={{
+						background: confirmDelete ? "rgba(220,38,38,0.15)" : "none",
+						border: "none",
+						color: confirmDelete ? "#dc2626" : colors.dismiss,
+						fontSize: confirmDelete ? "11px" : "18px",
+						cursor: "pointer",
+						lineHeight: 1,
+						padding: confirmDelete ? "3px 6px" : "2px 4px",
+						borderRadius: "4px",
+						opacity: confirmDelete ? 1 : 0.7,
+						transition: "all 0.15s",
+						whiteSpace: "nowrap",
+					}}
+					onMouseEnter={(e) => {
+						if (!confirmDelete) e.currentTarget.style.opacity = "1";
+					}}
+					onMouseLeave={(e) => {
+						if (!confirmDelete) e.currentTarget.style.opacity = "0.7";
+					}}
+				>
+					{confirmDelete ? "Delete?" : "\u2715"}
+				</button>
+			</div>
 
 			{/* Title */}
 			{note.title && (

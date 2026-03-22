@@ -6,8 +6,10 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_autostart::MacosLauncher;
+use tauri_plugin_updater::UpdaterExt;
 
 // ---------------------------------------------------------------------------
 // Data structures
@@ -64,6 +66,21 @@ fn write_notes(notes: &[Note]) {
     fs::write(notes_file(), json).ok();
 }
 
+fn create_blank_note() {
+    let note = Note {
+        id: uuid::Uuid::new_v4().to_string(),
+        title: None,
+        body: String::new(),
+        color: "yellow".to_string(),
+        created_at: Utc::now().to_rfc3339(),
+        expires_at: None,
+        position: None,
+    };
+    let mut notes = read_notes();
+    notes.push(note);
+    write_notes(&notes);
+}
+
 // ---------------------------------------------------------------------------
 // Tauri commands
 // ---------------------------------------------------------------------------
@@ -86,6 +103,19 @@ fn dismiss_note(id: String, app: AppHandle, state: tauri::State<'_, NotesState>)
     if let Some(window) = app.get_webview_window(&id) {
         window.close().ok();
     }
+}
+
+#[tauri::command]
+fn update_note_color(id: String, color: String, state: tauri::State<'_, NotesState>) -> Option<Note> {
+    if let Ok(mut notes) = state.notes.lock() {
+        if let Some(note) = notes.iter_mut().find(|n| n.id == id) {
+            note.color = color;
+            let updated = note.clone();
+            write_notes(&notes);
+            return Some(updated);
+        }
+    }
+    None
 }
 
 #[tauri::command]
@@ -185,11 +215,98 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_note,
             dismiss_note,
+            update_note_color,
             update_note_position
         ])
         .setup(|app| {
+            // Build the macOS menu bar
+            let app_submenu = Submenu::with_items(
+                app,
+                "Scratch Pad",
+                true,
+                &[
+                    &PredefinedMenuItem::about(app, Some("About Scratch Pad"), None)?,
+                    &MenuItem::with_id(app, "check_updates", "Check for Updates...", true, None::<&str>)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::hide(app, None)?,
+                    &PredefinedMenuItem::hide_others(app, None)?,
+                    &PredefinedMenuItem::show_all(app, None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::quit(app, None)?,
+                ],
+            )?;
+
+            let file_submenu = Submenu::with_items(
+                app,
+                "File",
+                true,
+                &[
+                    &MenuItem::with_id(app, "new_pad", "New Pad", true, Some("CmdOrCtrl+N"))?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &MenuItem::with_id(app, "clear_all", "Clear All Pads", true, None::<&str>)?,
+                ],
+            )?;
+
+            let edit_submenu = Submenu::with_items(
+                app,
+                "Edit",
+                true,
+                &[
+                    &PredefinedMenuItem::undo(app, None)?,
+                    &PredefinedMenuItem::redo(app, None)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::copy(app, None)?,
+                    &PredefinedMenuItem::paste(app, None)?,
+                    &PredefinedMenuItem::select_all(app, None)?,
+                ],
+            )?;
+
+            let menu = Menu::with_items(app, &[&app_submenu, &file_submenu, &edit_submenu])?;
+            app.set_menu(menu)?;
+
+            // Handle menu events
+            let handle = app.handle().clone();
+            app.on_menu_event(move |_app, event| {
+                match event.id().as_ref() {
+                    "new_pad" => {
+                        create_blank_note();
+                    }
+                    "clear_all" => {
+                        write_notes(&[]);
+                        let state = handle.state::<NotesState>();
+                        sync_windows(&handle, &state);
+                    }
+                    "check_updates" => {
+                        let h = handle.clone();
+                        tauri::async_runtime::spawn(check_for_updates(h));
+                    }
+                    _ => {}
+                }
+            });
+
             // Ensure the notes directory exists
             fs::create_dir_all(notes_dir()).ok();
+
+            // Create a welcome note if no notes exist yet
+            let notes = read_notes();
+            if notes.is_empty() {
+                let welcome = Note {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    title: Some("Welcome to Scratch Pad".to_string()),
+                    body: "This is your scratch pad — a place for quick notes between sessions.\n\n\
+                           **How it works:**\n\
+                           - Ask Claude to *\"write that to a scratch pad\"*\n\
+                           - Notes appear as floating windows on your desktop\n\
+                           - Drag to move, click **\u{2715}** to dismiss\n\n\
+                           Claude can also read, update, and clear your scratch pads via MCP."
+                        .to_string(),
+                    color: "yellow".to_string(),
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                    expires_at: None,
+                    position: None,
+                };
+                write_notes(&[welcome]);
+            }
 
             // Initial sync
             let state = app.state::<NotesState>();
@@ -225,6 +342,13 @@ pub fn run() {
                 }
             });
 
+            // Check for updates on startup (after a short delay)
+            let update_handle = app.handle().clone();
+            thread::spawn(move || {
+                thread::sleep(Duration::from_secs(5));
+                tauri::async_runtime::block_on(check_for_updates(update_handle));
+            });
+
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -235,4 +359,32 @@ pub fn run() {
             api.prevent_exit();
         }
     });
+}
+
+async fn check_for_updates(handle: AppHandle) {
+    let updater = match handle.updater() {
+        Ok(u) => u,
+        Err(e) => {
+            eprintln!("Failed to get updater: {e}");
+            return;
+        }
+    };
+
+    match updater.check().await {
+        Ok(Some(update)) => {
+            eprintln!(
+                "Update available: {} -> {}",
+                update.current_version, update.version
+            );
+            if let Err(e) = update.download_and_install(|_, _| {}, || {}).await {
+                eprintln!("Failed to install update: {e}");
+            }
+        }
+        Ok(None) => {
+            eprintln!("No update available");
+        }
+        Err(e) => {
+            eprintln!("Update check failed: {e}");
+        }
+    }
 }
