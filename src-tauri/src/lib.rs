@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_autostart::MacosLauncher;
@@ -26,6 +26,7 @@ pub struct Note {
     pub created_at: String,
     pub expires_at: Option<String>,
     pub position: Option<Position>,
+    pub size: Option<Size>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,8 +35,31 @@ pub struct Position {
     pub y: f64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Size {
+    pub width: f64,
+    pub height: f64,
+}
+
 pub struct NotesState {
     pub notes: Mutex<Vec<Note>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Settings {
+    #[serde(default)]
+    pub always_on_top: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self { always_on_top: false }
+    }
+}
+
+pub struct SettingsState {
+    pub settings: Mutex<Settings>,
 }
 
 // ---------------------------------------------------------------------------
@@ -45,6 +69,32 @@ pub struct NotesState {
 fn notes_dir() -> PathBuf {
     let home = dirs::home_dir().expect("could not resolve home directory");
     home.join(".scratch-pad")
+}
+
+fn log_file() -> PathBuf {
+    notes_dir().join("scratch-pad.log")
+}
+
+fn log(msg: &str) {
+    use std::io::Write;
+    let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S%.3f");
+    let line = format!("[{timestamp}] {msg}\n");
+    eprint!("{line}");
+    let path = log_file();
+    // Rotate if log exceeds 1MB
+    if let Ok(meta) = fs::metadata(&path) {
+        if meta.len() > 1_000_000 {
+            let old = path.with_extension("log.old");
+            fs::rename(&path, &old).ok();
+        }
+    }
+    if let Ok(mut f) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        f.write_all(line.as_bytes()).ok();
+    }
 }
 
 fn notes_file() -> PathBuf {
@@ -60,6 +110,26 @@ fn read_notes() -> Vec<Note> {
     serde_json::from_str(&data).unwrap_or_default()
 }
 
+fn settings_file() -> PathBuf {
+    notes_dir().join("settings.json")
+}
+
+fn read_settings() -> Settings {
+    let path = settings_file();
+    if !path.exists() {
+        return Settings::default();
+    }
+    let data = fs::read_to_string(&path).unwrap_or_default();
+    serde_json::from_str(&data).unwrap_or_default()
+}
+
+fn write_settings(settings: &Settings) {
+    let dir = notes_dir();
+    fs::create_dir_all(&dir).ok();
+    let json = serde_json::to_string_pretty(settings).unwrap_or_default();
+    fs::write(settings_file(), json).ok();
+}
+
 fn write_notes(notes: &[Note]) {
     let dir = notes_dir();
     fs::create_dir_all(&dir).ok();
@@ -68,6 +138,7 @@ fn write_notes(notes: &[Note]) {
 }
 
 fn create_blank_note() {
+    log("Creating blank note");
     let note = Note {
         id: uuid::Uuid::new_v4().to_string(),
         title: None,
@@ -76,6 +147,7 @@ fn create_blank_note() {
         created_at: Utc::now().to_rfc3339(),
         expires_at: None,
         position: None,
+        size: None,
     };
     let mut notes = read_notes();
     notes.push(note);
@@ -186,19 +258,97 @@ fn clamp_to_screen(app: &AppHandle, x: f64, y: f64, win_w: f64, win_h: f64) -> (
     (clamped_x, clamped_y)
 }
 
+fn organize_windows(app: &AppHandle, state: &NotesState) {
+    log("Organizing windows");
+    let note_ids: Vec<String> = {
+        let notes = state.notes.lock().unwrap();
+        notes.iter().map(|n| n.id.clone()).collect()
+    };
+
+    let count = note_ids.len();
+    if count == 0 {
+        return;
+    }
+
+    // Get screen dimensions
+    let monitor = app.primary_monitor().ok().flatten();
+    let (screen_x, screen_y, screen_w, screen_h) = match &monitor {
+        Some(m) => {
+            let pos = m.position();
+            let size = m.size();
+            let scale = m.scale_factor();
+            (
+                pos.x as f64,
+                pos.y as f64,
+                size.width as f64 / scale,
+                size.height as f64 / scale,
+            )
+        }
+        None => (0.0, 0.0, 1920.0, 1080.0),
+    };
+
+    // Account for menu bar and dock
+    let pad_top = 30.0;
+    let pad_bottom = 80.0;
+    let pad_side = 10.0;
+    let gap = 8.0;
+
+    let usable_w = screen_w - (2.0 * pad_side);
+    let usable_h = screen_h - pad_top - pad_bottom;
+
+    // Calculate grid: cols = ceil(sqrt(n)), rows = ceil(n / cols)
+    let cols = (count as f64).sqrt().ceil() as usize;
+    let rows = (count as f64 / cols as f64).ceil() as usize;
+
+    let win_w = (usable_w - (gap * (cols as f64 - 1.0))) / cols as f64;
+    let win_h = (usable_h - (gap * (rows as f64 - 1.0))) / rows as f64;
+
+    for (i, id) in note_ids.iter().enumerate() {
+        if let Some(window) = app.get_webview_window(id) {
+            let col = i % cols;
+            let row = i / cols;
+            let x = screen_x + pad_side + (col as f64 * (win_w + gap));
+            let y = screen_y + pad_top + (row as f64 * (win_h + gap));
+
+            window.set_size(tauri::LogicalSize::new(win_w, win_h)).ok();
+            window.set_position(tauri::LogicalPosition::new(x, y)).ok();
+            window.set_focus().ok();
+        }
+    }
+
+    // Also persist positions
+    if let Ok(mut notes) = state.notes.lock() {
+        for (i, note) in notes.iter_mut().enumerate() {
+            let col = i % cols;
+            let row = i / cols;
+            let x = screen_x + pad_side + (col as f64 * (win_w + gap));
+            let y = screen_y + pad_top + (row as f64 * (win_h + gap));
+            note.position = Some(Position { x, y });
+        }
+        write_notes(&notes);
+    }
+}
+
 fn create_note_window(app: &AppHandle, note: &Note, _index: usize) {
     // Skip if a window with this label already exists
     if app.get_webview_window(&note.id).is_some() {
         return;
     }
+    log(&format!("Creating window for note {}", note.id));
 
-    let win_w: f64 = 380.0;
-    let win_h: f64 = 320.0;
+    let win_w = note.size.as_ref().map(|s| s.width).unwrap_or(380.0);
+    let win_h = note.size.as_ref().map(|s| s.height).unwrap_or(320.0);
+
+    let always_on_top = app
+        .try_state::<SettingsState>()
+        .and_then(|s| s.settings.lock().ok().map(|s| s.always_on_top))
+        .unwrap_or(false);
 
     let builder = WebviewWindowBuilder::new(app, &note.id, WebviewUrl::default())
         .title(note.title.as_deref().unwrap_or("Scratch Pad"))
         .decorations(false)
         .transparent(true)
+        .always_on_top(always_on_top)
         .inner_size(win_w, win_h);
 
     // Clamp position so the note is fully visible on screen
@@ -210,10 +360,13 @@ fn create_note_window(app: &AppHandle, note: &Note, _index: usize) {
         None => builder.center(),
     };
 
-    builder.build().ok();
+    if let Ok(window) = builder.build() {
+        window.set_focus().ok();
+    }
 }
 
 fn sync_windows(app: &AppHandle, state: &NotesState) {
+    log("Syncing windows");
     let mut notes = read_notes();
     let now = Utc::now();
 
@@ -246,6 +399,13 @@ fn sync_windows(app: &AppHandle, state: &NotesState) {
         if let Some(window) = app.get_webview_window(&note.id) {
             // Window already exists — push updated data to the frontend
             window.emit("note-updated", note.clone()).ok();
+            // Apply position/size if set (e.g. from MCP move/resize)
+            if let Some(ref pos) = note.position {
+                window.set_position(tauri::LogicalPosition::new(pos.x, pos.y)).ok();
+            }
+            if let Some(ref size) = note.size {
+                window.set_size(tauri::LogicalSize::new(size.width, size.height)).ok();
+            }
         } else {
             create_note_window(app, note, i);
         }
@@ -266,6 +426,9 @@ pub fn run() {
     let app = tauri::Builder::default()
         .manage(NotesState {
             notes: Mutex::new(vec![]),
+        })
+        .manage(SettingsState {
+            settings: Mutex::new(read_settings()),
         })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
@@ -292,6 +455,7 @@ pub fn run() {
                         ..Default::default()
                     }))?,
                     &MenuItem::with_id(app, "check_updates", "Check for Updates...", true, None::<&str>)?,
+                    &MenuItem::with_id(app, "show_logs", "Show Logs", true, None::<&str>)?,
                     &PredefinedMenuItem::separator(app)?,
                     &PredefinedMenuItem::hide(app, None)?,
                     &PredefinedMenuItem::hide_others(app, None)?,
@@ -307,6 +471,7 @@ pub fn run() {
                 true,
                 &[
                     &MenuItem::with_id(app, "new_pad", "New Pad", true, Some("CmdOrCtrl+N"))?,
+                    &MenuItem::with_id(app, "organize", "Organize Pads", true, Some("CmdOrCtrl+Shift+O"))?,
                     &PredefinedMenuItem::separator(app)?,
                     &MenuItem::with_id(app, "clear_all", "Clear All Pads", true, None::<&str>)?,
                 ],
@@ -326,7 +491,17 @@ pub fn run() {
                 ],
             )?;
 
-            let menu = Menu::with_items(app, &[&app_submenu, &file_submenu, &edit_submenu])?;
+            let initial_settings = read_settings();
+            let view_submenu = Submenu::with_items(
+                app,
+                "View",
+                true,
+                &[
+                    &CheckMenuItem::with_id(app, "always_on_top", "Always on Top", true, initial_settings.always_on_top, None::<&str>)?,
+                ],
+            )?;
+
+            let menu = Menu::with_items(app, &[&app_submenu, &file_submenu, &edit_submenu, &view_submenu])?;
             app.set_menu(menu)?;
 
             // Handle menu events
@@ -336,6 +511,10 @@ pub fn run() {
                     "new_pad" | "tray_new_pad" => {
                         create_blank_note();
                     }
+                    "organize" | "tray_organize" => {
+                        let state = handle.state::<NotesState>();
+                        organize_windows(&handle, &state);
+                    }
                     "clear_all" => {
                         write_notes(&[]);
                         let state = handle.state::<NotesState>();
@@ -344,6 +523,33 @@ pub fn run() {
                     "check_updates" => {
                         let h = handle.clone();
                         tauri::async_runtime::spawn(check_for_updates(h, false));
+                    }
+                    "show_logs" => {
+                        let path = log_file();
+                        if path.exists() {
+                            std::process::Command::new("open").arg(path).spawn().ok();
+                        }
+                    }
+                    "always_on_top" => {
+                        let on_top = {
+                            let settings_state = handle.state::<SettingsState>();
+                            let mut settings = settings_state.settings.lock().unwrap();
+                            settings.always_on_top = !settings.always_on_top;
+                            write_settings(&settings);
+                            settings.always_on_top
+                        };
+
+                        // Apply to all open windows
+                        let note_ids: Vec<String> = {
+                            let notes_state = handle.state::<NotesState>();
+                            let notes = notes_state.notes.lock().unwrap();
+                            notes.iter().map(|n| n.id.clone()).collect()
+                        };
+                        for id in &note_ids {
+                            if let Some(window) = handle.get_webview_window(id) {
+                                window.set_always_on_top(on_top).ok();
+                            }
+                        }
                     }
                     "tray_quit" => {
                         std::process::exit(0);
@@ -357,6 +563,7 @@ pub fn run() {
                 app,
                 &[
                     &MenuItem::with_id(app, "tray_new_pad", "New Pad", true, None::<&str>)?,
+                    &MenuItem::with_id(app, "tray_organize", "Organize Pads", true, None::<&str>)?,
                     &PredefinedMenuItem::separator(app)?,
                     &MenuItem::with_id(app, "tray_quit", "Quit Scratch Pad", true, None::<&str>)?,
                 ],
@@ -396,6 +603,7 @@ pub fn run() {
                     created_at: chrono::Utc::now().to_rfc3339(),
                     expires_at: None,
                     position: None,
+                    size: None,
                 };
                 write_notes(&[welcome]);
             }
@@ -420,8 +628,18 @@ pub fn run() {
                                 EventKind::Modify(_) | EventKind::Create(_) => {
                                     // Small debounce to avoid rapid re-reads
                                     thread::sleep(Duration::from_millis(100));
-                                    let state = handle.state::<NotesState>();
-                                    sync_windows(&handle, &state);
+
+                                    // Check for organize signal from MCP
+                                    let organize_signal = notes_dir().join(".organize");
+                                    if organize_signal.exists() {
+                                        fs::remove_file(&organize_signal).ok();
+                                        let state = handle.state::<NotesState>();
+                                        sync_windows(&handle, &state);
+                                        organize_windows(&handle, &state);
+                                    } else {
+                                        let state = handle.state::<NotesState>();
+                                        sync_windows(&handle, &state);
+                                    }
                                 }
                                 _ => {}
                             }
@@ -454,11 +672,23 @@ pub fn run() {
                     if first_activation.swap(false, Ordering::Relaxed) {
                         return;
                     }
+                    log("App activated — raising all windows");
+                    let state = activation_handle.state::<NotesState>();
                     let notes = read_notes();
                     if notes.is_empty() {
                         create_blank_note();
-                        let state = activation_handle.state::<NotesState>();
                         sync_windows(&activation_handle, &state);
+                    } else {
+                        // Bring all note windows to front
+                        let note_ids: Vec<String> = {
+                            let locked = state.notes.lock().unwrap();
+                            locked.iter().map(|n| n.id.clone()).collect()
+                        };
+                        for id in &note_ids {
+                            if let Some(w) = activation_handle.get_webview_window(id) {
+                                w.set_focus().ok();
+                            }
+                        }
                     }
                 });
 
@@ -533,6 +763,7 @@ async fn check_for_updates(handle: AppHandle, silent: bool) {
                 created_at: Utc::now().to_rfc3339(),
                 expires_at: None,
                 position: None,
+                size: None,
             };
             let mut notes = read_notes();
             notes.retain(|n| n.id != "update-status");
@@ -568,6 +799,7 @@ async fn check_for_updates(handle: AppHandle, silent: bool) {
                         (Utc::now() + chrono::Duration::seconds(10)).to_rfc3339(),
                     ),
                     position: None,
+                    size: None,
                 };
                 let mut notes = read_notes();
                 notes.retain(|n| n.id != "update-status");
@@ -588,6 +820,7 @@ async fn check_for_updates(handle: AppHandle, silent: bool) {
                         (Utc::now() + chrono::Duration::seconds(15)).to_rfc3339(),
                     ),
                     position: None,
+                    size: None,
                 };
                 let mut notes = read_notes();
                 notes.retain(|n| n.id != "update-status");

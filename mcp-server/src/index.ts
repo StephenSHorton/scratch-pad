@@ -20,6 +20,7 @@ interface Note {
   createdAt: string;
   expiresAt: string | null;
   position: { x: number; y: number } | null;
+  size: { width: number; height: number } | null;
 }
 
 function notesDir(): string {
@@ -60,10 +61,10 @@ const server = new McpServer({
 
 server.tool(
   "note_create",
-  "Create a new scratch pad note on the desktop. Supports markdown content. The note appears as a floating window the user can see.",
+  "Create a new scratch pad note on the desktop. Supports markdown content. The note appears as a floating window the user can see. Do not repeat the title in the body — the title is displayed separately above the body.",
   {
-    body: z.string().describe("The note content"),
-    title: z.string().optional().describe("Optional note title"),
+    body: z.string().describe("The note content (do not include the title here — it is shown separately)"),
+    title: z.string().optional().describe("Optional note title (displayed separately above the body)"),
     color: z
       .enum(["yellow", "pink", "blue", "green"])
       .optional()
@@ -86,6 +87,7 @@ server.tool(
         ? new Date(now.getTime() + ttl * 60 * 60 * 1000).toISOString()
         : null,
       position: null,
+      size: null,
     };
 
     const notes = readNotes();
@@ -133,6 +135,12 @@ server.tool(
       parts.push(`Created: ${new Date(n.createdAt).toLocaleString()}`);
       if (n.expiresAt) {
         parts.push(`Expires: ${new Date(n.expiresAt).toLocaleString()}`);
+      }
+      if (n.position) {
+        parts.push(`Position: (${n.position.x}, ${n.position.y})`);
+      }
+      if (n.size) {
+        parts.push(`Size: ${n.size.width}x${n.size.height}`);
       }
       parts.push("", n.body);
       return parts.join("\n");
@@ -218,7 +226,104 @@ server.tool(
   },
 );
 
-// ---- Tool 5: note_clear ----
+// ---- Tool 5: note_move ----
+
+server.tool(
+  "note_move",
+  "Move a scratch pad note to a specific screen position",
+  {
+    id: z.string().describe("The ID of the note to move"),
+    x: z.number().describe("X position in screen pixels"),
+    y: z.number().describe("Y position in screen pixels"),
+  },
+  async ({ id, x, y }) => {
+    const notes = readNotes();
+    const note = notes.find((n) => n.id === id);
+    if (!note) {
+      return {
+        content: [{ type: "text" as const, text: `Note ${id} not found.` }],
+      };
+    }
+
+    note.position = { x, y };
+    writeNotes(notes);
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `Moved note ${note.id} to (${x}, ${y})`,
+        },
+      ],
+    };
+  },
+);
+
+// ---- Tool 6: note_resize ----
+
+server.tool(
+  "note_resize",
+  "Resize a scratch pad note window",
+  {
+    id: z.string().describe("The ID of the note to resize"),
+    width: z.number().describe("Width in pixels"),
+    height: z.number().describe("Height in pixels"),
+  },
+  async ({ id, width, height }) => {
+    const notes = readNotes();
+    const note = notes.find((n) => n.id === id);
+    if (!note) {
+      return {
+        content: [{ type: "text" as const, text: `Note ${id} not found.` }],
+      };
+    }
+
+    note.size = { width, height };
+    writeNotes(notes);
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `Resized note ${note.id} to ${width}x${height}`,
+        },
+      ],
+    };
+  },
+);
+
+// ---- Tool 7: note_organize ----
+
+server.tool(
+  "note_organize",
+  "Arrange all scratch pad notes in an optimal grid layout filling the screen. The app handles the actual layout using real screen dimensions.",
+  {},
+  async () => {
+    const notes = readNotes();
+    const active = notes.filter(
+      (n) => !n.expiresAt || new Date(n.expiresAt).getTime() > Date.now(),
+    );
+
+    if (active.length === 0) {
+      return {
+        content: [{ type: "text" as const, text: "No notes to organize." }],
+      };
+    }
+
+    // Write a signal file — the app's file watcher picks it up and runs
+    // organize_windows with real screen dimensions
+    fs.writeFileSync(path.join(notesDir(), ".organize"), "", "utf-8");
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `Organizing ${active.length} note(s)`,
+        },
+      ],
+    };
+  },
+);
+
+// ---- Tool 8: note_clear ----
 
 server.tool(
   "note_clear",
