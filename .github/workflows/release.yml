@@ -6,44 +6,22 @@ on:
       - 'v*'
 
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: macos-latest
-            args: --target aarch64-apple-darwin
-            target: aarch64-apple-darwin
-          - platform: macos-latest
-            args: --target x86_64-apple-darwin
-            target: x86_64-apple-darwin
-
-    runs-on: ${{ matrix.platform }}
-
+  build-aarch64:
+    runs-on: macos-latest
+    outputs:
+      sig: ${{ steps.sig.outputs.sig }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
-
-      - name: Install frontend dependencies
-        run: bun install
-
-      - name: Install MCP server dependencies
-        run: cd mcp-server && bun install
-
-      - name: Build MCP sidecar binary
-        run: |
-          cd mcp-server
-          bun build --compile --minify --target=bun-darwin-${{ contains(matrix.target, 'aarch64') && 'arm64' || 'x64' }} src/index.ts --outfile ../src-tauri/binaries/scratch-pad-mcp-${{ matrix.target }}
-
+          targets: aarch64-apple-darwin
+      - run: bun install
+      - run: cd mcp-server && bun install
+      - name: Build MCP sidecar
+        run: cd mcp-server && bun build --compile --minify --target=bun-darwin-arm64 src/index.ts --outfile ../src-tauri/binaries/scratch-pad-mcp-aarch64-apple-darwin
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
@@ -56,52 +34,84 @@ jobs:
           releaseBody: 'See the assets below to download and install.'
           releaseDraft: true
           prerelease: false
-          args: ${{ matrix.args }}
-
-      - name: Find and upload signature artifact
+          args: --target aarch64-apple-darwin
+      - name: Read signature
+        id: sig
         run: |
-          SIG_FILE=$(find src-tauri/target -name "*.app.tar.gz.sig" 2>/dev/null | head -1)
+          SIG_FILE=$(find . -name "*.app.tar.gz.sig" -type f 2>/dev/null | head -1)
           if [ -n "$SIG_FILE" ]; then
-            echo "Found sig: $SIG_FILE"
-            cp "$SIG_FILE" sig-${{ matrix.target }}.sig
+            echo "sig=$(cat "$SIG_FILE")" >> $GITHUB_OUTPUT
           else
-            echo "ERROR: No .sig file found!"
-            find src-tauri/target -name "*.sig" 2>/dev/null
+            echo "No .sig file found!"
+            find . -name "*.sig" -type f 2>/dev/null
             exit 1
           fi
 
-      - name: Upload signature artifact
-        uses: actions/upload-artifact@v4
+  build-x64:
+    runs-on: macos-latest
+    outputs:
+      sig: ${{ steps.sig.outputs.sig }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
         with:
-          name: sig-${{ matrix.target }}
-          path: sig-${{ matrix.target }}.sig
+          bun-version: latest
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+      - run: bun install
+      - run: cd mcp-server && bun install
+      - name: Build MCP sidecar
+        run: cd mcp-server && bun build --compile --minify --target=bun-darwin-x64 src/index.ts --outfile ../src-tauri/binaries/scratch-pad-mcp-x86_64-apple-darwin
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Scratch Pad ${{ github.ref_name }}'
+          releaseBody: 'See the assets below to download and install.'
+          releaseDraft: true
+          prerelease: false
+          args: --target x86_64-apple-darwin
+      - name: Read signature
+        id: sig
+        run: |
+          SIG_FILE=$(find . -name "*.app.tar.gz.sig" -type f 2>/dev/null | head -1)
+          if [ -n "$SIG_FILE" ]; then
+            echo "sig=$(cat "$SIG_FILE")" >> $GITHUB_OUTPUT
+          else
+            echo "No .sig file found!"
+            find . -name "*.sig" -type f 2>/dev/null
+            exit 1
+          fi
 
   updater:
-    needs: build
+    needs: [build-aarch64, build-x64]
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Download all sig artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: sigs
-
-      - name: Get version from tag
-        id: version
-        run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
-
-      - name: Build latest.json
+      - name: Build and upload latest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          AARCH64_SIG=$(cat sigs/sig-aarch64-apple-darwin/sig-aarch64-apple-darwin.sig)
-          X86_64_SIG=$(cat sigs/sig-x86_64-apple-darwin/sig-x86_64-apple-darwin.sig)
           TAG="${GITHUB_REF_NAME}"
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${TAG#v}"
           PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           REPO="https://github.com/${{ github.repository }}"
+          AARCH64_SIG="${{ needs.build-aarch64.outputs.sig }}"
+          X64_SIG="${{ needs.build-x64.outputs.sig }}"
+
+          echo "aarch64 sig length: ${#AARCH64_SIG}"
+          echo "x64 sig length: ${#X64_SIG}"
+
+          if [ -z "$AARCH64_SIG" ] || [ -z "$X64_SIG" ]; then
+            echo "ERROR: Missing signatures!"
+            exit 1
+          fi
 
           cat > latest.json << EOF
           {
@@ -114,18 +124,12 @@ jobs:
                 "url": "${REPO}/releases/download/${TAG}/Scratch.Pad_aarch64.app.tar.gz"
               },
               "darwin-x86_64": {
-                "signature": "${X86_64_SIG}",
+                "signature": "${X64_SIG}",
                 "url": "${REPO}/releases/download/${TAG}/Scratch.Pad_x64.app.tar.gz"
               }
             }
           }
           EOF
 
-          echo "Generated latest.json:"
           cat latest.json
-
-      - name: Upload latest.json to release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release upload "${GITHUB_REF_NAME}" latest.json --clobber
+          gh release upload "${TAG}" latest.json --repo "${{ github.repository }}" --clobber
