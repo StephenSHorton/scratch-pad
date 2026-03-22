@@ -58,11 +58,23 @@ jobs:
           prerelease: false
           args: ${{ matrix.args }}
 
+      - name: Find and upload signature artifact
+        run: |
+          SIG_FILE=$(find src-tauri/target -name "*.app.tar.gz.sig" 2>/dev/null | head -1)
+          if [ -n "$SIG_FILE" ]; then
+            echo "Found sig: $SIG_FILE"
+            cp "$SIG_FILE" sig-${{ matrix.target }}.sig
+          else
+            echo "ERROR: No .sig file found!"
+            find src-tauri/target -name "*.sig" 2>/dev/null
+            exit 1
+          fi
+
       - name: Upload signature artifact
         uses: actions/upload-artifact@v4
         with:
           name: sig-${{ matrix.target }}
-          path: src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.sig
+          path: sig-${{ matrix.target }}.sig
 
   updater:
     needs: build
@@ -84,8 +96,8 @@ jobs:
 
       - name: Build latest.json
         run: |
-          AARCH64_SIG=$(cat sigs/sig-aarch64-apple-darwin/*.sig)
-          X86_64_SIG=$(cat sigs/sig-x86_64-apple-darwin/*.sig)
+          AARCH64_SIG=$(cat sigs/sig-aarch64-apple-darwin/sig-aarch64-apple-darwin.sig)
+          X86_64_SIG=$(cat sigs/sig-x86_64-apple-darwin/sig-x86_64-apple-darwin.sig)
           TAG="${GITHUB_REF_NAME}"
           VERSION="${{ steps.version.outputs.version }}"
           PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
