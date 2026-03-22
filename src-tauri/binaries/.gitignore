@@ -1,0 +1,3 @@
+# Sidecar binaries are built during CI, not committed
+*
+!.gitignore

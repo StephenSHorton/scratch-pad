@@ -24,5 +24,12 @@ dist-ssr
 *.sln
 *.sw?
 
+# Tauri
+src-tauri/target/
+
+# MCP server
+mcp-server/dist/
+mcp-server/node_modules/
+
 # Tanstack
 .tanstack

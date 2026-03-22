@@ -7,7 +7,8 @@
 		"build": "tsgo -b && vite build",
 		"lint": "biome check",
 		"preview": "vite preview",
-		"tauri": "tauri"
+		"tauri": "tauri",
+		"build:mcp": "cd mcp-server && bun run build:binary && TRIPLE=$(rustc -vV | grep host | cut -d' ' -f2) && mv ../src-tauri/binaries/scratch-pad-mcp ../src-tauri/binaries/scratch-pad-mcp-${TRIPLE}"
 	},
 	"dependencies": {
 		"@base-ui/react": "^1.2.0",

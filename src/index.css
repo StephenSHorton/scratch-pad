@@ -118,7 +118,101 @@
 	* {
 		@apply border-border outline-ring/50;
 	}
-	body {
-		@apply bg-background text-foreground;
+	html {
+		background: transparent;
 	}
+	body {
+		@apply text-foreground;
+		background: transparent;
+	}
+	#root {
+		background: transparent;
+		height: 100vh;
+	}
+}
+
+/* ---------------------------------------------------------------------------
+   Markdown rendering styles for sticky notes
+   --------------------------------------------------------------------------- */
+
+.md-body .md-h1 {
+	font-size: 16px;
+	font-weight: 700;
+	margin: 0 0 4px 0;
+	line-height: 1.3;
+}
+
+.md-body .md-h2 {
+	font-size: 14.5px;
+	font-weight: 600;
+	margin: 0 0 3px 0;
+	line-height: 1.3;
+}
+
+.md-body .md-h3 {
+	font-size: 13.5px;
+	font-weight: 600;
+	margin: 0 0 2px 0;
+	line-height: 1.3;
+}
+
+.md-body .md-p {
+	margin: 0 0 2px 0;
+}
+
+.md-body .md-spacer {
+	height: 6px;
+}
+
+.md-body .md-ul,
+.md-body .md-ol {
+	margin: 2px 0 4px 0;
+	padding-left: 18px;
+}
+
+.md-body .md-ul {
+	list-style-type: disc;
+}
+
+.md-body .md-ol {
+	list-style-type: decimal;
+}
+
+.md-body .md-ul li,
+.md-body .md-ol li {
+	margin-bottom: 1px;
+}
+
+.md-body .md-code-block {
+	background: rgba(0, 0, 0, 0.07);
+	border-radius: 4px;
+	padding: 6px 8px;
+	margin: 4px 0;
+	font-family: "SF Mono", "Menlo", "Consolas", monospace;
+	font-size: 11.5px;
+	line-height: 1.45;
+	overflow-x: auto;
+	white-space: pre;
+}
+
+.md-body .md-code-block code {
+	background: none;
+	padding: 0;
+	font-size: inherit;
+}
+
+.md-body .md-inline-code {
+	background: rgba(0, 0, 0, 0.06);
+	border-radius: 3px;
+	padding: 1px 4px;
+	font-family: "SF Mono", "Menlo", "Consolas", monospace;
+	font-size: 11.5px;
+}
+
+.md-body strong {
+	font-weight: 600;
+}
+
+.md-body em {
+	font-style: italic;
 }
