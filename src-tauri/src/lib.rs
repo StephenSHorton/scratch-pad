@@ -7,6 +7,7 @@ use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_updater::UpdaterExt;
@@ -119,6 +120,22 @@ fn update_note_color(id: String, color: String, state: tauri::State<'_, NotesSta
 }
 
 #[tauri::command]
+fn update_note_body(id: String, body: String, title: Option<String>, state: tauri::State<'_, NotesState>) -> Option<Note> {
+    if let Ok(mut notes) = state.notes.lock() {
+        if let Some(note) = notes.iter_mut().find(|n| n.id == id) {
+            note.body = body;
+            if let Some(t) = title {
+                note.title = Some(t);
+            }
+            let updated = note.clone();
+            write_notes(&notes);
+            return Some(updated);
+        }
+    }
+    None
+}
+
+#[tauri::command]
 fn update_note_position(id: String, x: f64, y: f64, state: tauri::State<'_, NotesState>) {
     if let Ok(mut notes) = state.notes.lock() {
         if let Some(note) = notes.iter_mut().find(|n| n.id == id) {
@@ -132,27 +149,66 @@ fn update_note_position(id: String, x: f64, y: f64, state: tauri::State<'_, Note
 // Window management
 // ---------------------------------------------------------------------------
 
-fn create_note_window(app: &AppHandle, note: &Note, index: usize) {
+fn clamp_to_screen(app: &AppHandle, x: f64, y: f64, win_w: f64, win_h: f64) -> (f64, f64) {
+    // Try to get the monitor at the note's position, fall back to primary
+    let monitor = app
+        .primary_monitor()
+        .ok()
+        .flatten();
+
+    let (screen_x, screen_y, screen_w, screen_h) = match &monitor {
+        Some(m) => {
+            let pos = m.position();
+            let size = m.size();
+            let scale = m.scale_factor();
+            (
+                pos.x as f64,
+                pos.y as f64,
+                size.width as f64 / scale,
+                size.height as f64 / scale,
+            )
+        }
+        None => (0.0, 0.0, 1920.0, 1080.0), // fallback
+    };
+
+    // Leave some padding for the macOS menu bar (30px) and dock
+    let pad_top = 30.0;
+    let pad_bottom = 80.0;
+    let pad_side = 10.0;
+
+    let clamped_x = x
+        .max(screen_x + pad_side)
+        .min(screen_x + screen_w - win_w - pad_side);
+    let clamped_y = y
+        .max(screen_y + pad_top)
+        .min(screen_y + screen_h - win_h - pad_bottom);
+
+    (clamped_x, clamped_y)
+}
+
+fn create_note_window(app: &AppHandle, note: &Note, _index: usize) {
     // Skip if a window with this label already exists
     if app.get_webview_window(&note.id).is_some() {
         return;
     }
 
-    let (x, y) = match &note.position {
-        Some(pos) => (pos.x, pos.y),
-        None => {
-            let offset = (index as f64) * 30.0;
-            (100.0 + offset, 100.0 + offset)
-        }
-    };
+    let win_w: f64 = 380.0;
+    let win_h: f64 = 320.0;
 
     let builder = WebviewWindowBuilder::new(app, &note.id, WebviewUrl::default())
         .title(note.title.as_deref().unwrap_or("Scratch Pad"))
         .decorations(false)
         .transparent(true)
-        .always_on_top(true)
-        .inner_size(380.0, 320.0)
-        .position(x, y);
+        .inner_size(win_w, win_h);
+
+    // Clamp position so the note is fully visible on screen
+    let builder = match &note.position {
+        Some(pos) => {
+            let (x, y) = clamp_to_screen(app, pos.x, pos.y, win_w, win_h);
+            builder.position(x, y)
+        }
+        None => builder.center(),
+    };
 
     builder.build().ok();
 }
@@ -215,6 +271,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_note,
             dismiss_note,
+            update_note_body,
             update_note_color,
             update_note_position
         ])
@@ -268,7 +325,7 @@ pub fn run() {
             let handle = app.handle().clone();
             app.on_menu_event(move |_app, event| {
                 match event.id().as_ref() {
-                    "new_pad" => {
+                    "new_pad" | "tray_new_pad" => {
                         create_blank_note();
                     }
                     "clear_all" => {
@@ -280,9 +337,31 @@ pub fn run() {
                         let h = handle.clone();
                         tauri::async_runtime::spawn(check_for_updates(h));
                     }
+                    "tray_quit" => {
+                        std::process::exit(0);
+                    }
                     _ => {}
                 }
             });
+
+            // System tray icon
+            let tray_menu = Menu::with_items(
+                app,
+                &[
+                    &MenuItem::with_id(app, "tray_new_pad", "New Pad", true, None::<&str>)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &MenuItem::with_id(app, "tray_quit", "Quit Scratch Pad", true, None::<&str>)?,
+                ],
+            )?;
+
+            let tray_icon_bytes = include_bytes!("../icons/tray-icon.png");
+            let tray_icon = tauri::image::Image::from_bytes(tray_icon_bytes)?;
+            TrayIconBuilder::new()
+                .icon(tray_icon)
+                .icon_as_template(true)
+                .menu(&tray_menu)
+                .show_menu_on_left_click(true)
+                .build(app)?;
 
             // Ensure the notes directory exists
             fs::create_dir_all(notes_dir()).ok();
@@ -308,13 +387,18 @@ pub fn run() {
                 write_notes(&[welcome]);
             }
 
-            // Initial sync
-            let state = app.state::<NotesState>();
-            sync_windows(app.handle(), &state);
-
-            // Spawn a file-system watcher thread
+            // Initial sync + file watcher — delay slightly so the app is fully ready,
+            // and start the watcher AFTER the initial sync to avoid races
             let app_handle = app.handle().clone();
             thread::spawn(move || {
+                // Wait for the app to finish setup
+                thread::sleep(Duration::from_millis(500));
+
+                // Initial sync
+                let state = app_handle.state::<NotesState>();
+                sync_windows(&app_handle, &state);
+
+                // Now start the file watcher
                 let handle = app_handle.clone();
                 let mut watcher =
                     notify::recommended_watcher(move |res: Result<Event, notify::Error>| {

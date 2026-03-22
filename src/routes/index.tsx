@@ -166,6 +166,11 @@ export const Route = createFileRoute("/")({
 function StickyNote() {
 	const [note, setNote] = useState<Note | null>(null);
 	const [confirmDelete, setConfirmDelete] = useState(false);
+	const [editing, setEditing] = useState(false);
+	const [editBody, setEditBody] = useState("");
+	const [editingTitle, setEditingTitle] = useState(false);
+	const [editTitle, setEditTitle] = useState("");
+	const [colorPickerOpen, setColorPickerOpen] = useState(false);
 
 	useEffect(() => {
 		const win = getCurrentWindow();
@@ -241,51 +246,80 @@ function StickyNote() {
 					display: "flex",
 					alignItems: "center",
 					gap: "4px",
+					zIndex: 20,
 				}}
 			>
-				{/* Color picker */}
-				<button
-					type="button"
-					onClick={() => {
-						const colorOrder: Note["color"][] = ["yellow", "pink", "blue", "green"];
-						const idx = colorOrder.indexOf(note.color);
-						const next = colorOrder[(idx + 1) % colorOrder.length];
-						invoke<Note | null>("update_note_color", { id: note.id, color: next }).then(
-							(updated) => {
-								if (updated) setNote(updated);
-							},
-						);
-					}}
-					style={{
-						background: "none",
-						border: "none",
-						cursor: "pointer",
-						padding: "2px",
-						opacity: 0.6,
-						transition: "opacity 0.15s",
-						display: "flex",
-						alignItems: "center",
-						gap: "2px",
-					}}
-					onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")}
-					onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.6")}
-				>
-					{(["yellow", "pink", "blue", "green"] as const)
-						.filter((c) => c !== note.color)
-						.map((c) => (
-							<span
-								key={c}
-								style={{
-									display: "inline-block",
-									width: "8px",
-									height: "8px",
-									borderRadius: "50%",
-									background: NOTE_COLORS[c].bg,
-									border: `1px solid ${NOTE_COLORS[c].dismiss}`,
-								}}
-							/>
-						))}
-				</button>
+				{/* Color picker — single dot that expands to show all colors */}
+				<div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+					<button
+						type="button"
+						onClick={() => setColorPickerOpen(!colorPickerOpen)}
+						onBlur={() => setTimeout(() => setColorPickerOpen(false), 150)}
+						style={{
+							background: NOTE_COLORS[note.color].bg,
+							border: `1.5px solid ${NOTE_COLORS[note.color].dismiss}`,
+							width: "12px",
+							height: "12px",
+							borderRadius: "50%",
+							cursor: "pointer",
+							padding: 0,
+							opacity: 0.8,
+							transition: "opacity 0.15s",
+						}}
+						onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")}
+						onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.8")}
+					/>
+					{colorPickerOpen && (
+						<div
+							style={{
+								position: "absolute",
+								top: "100%",
+								right: 0,
+								marginTop: "4px",
+								background: "rgba(255,255,255,0.95)",
+								borderRadius: "8px",
+								padding: "6px",
+								display: "flex",
+								gap: "5px",
+								boxShadow: "0 2px 12px rgba(0,0,0,0.15)",
+								zIndex: 10,
+							}}
+						>
+							{(["yellow", "pink", "blue", "green"] as const).map((c) => (
+								<button
+									key={c}
+									type="button"
+									onClick={() => {
+										if (c !== note.color) {
+											invoke<Note | null>("update_note_color", {
+												id: note.id,
+												color: c,
+											}).then((updated) => {
+												if (updated) setNote(updated);
+											});
+										}
+										setColorPickerOpen(false);
+									}}
+									style={{
+										background: NOTE_COLORS[c].bg,
+										border:
+											c === note.color
+												? `2px solid ${NOTE_COLORS[c].text}`
+												: `1.5px solid ${NOTE_COLORS[c].dismiss}`,
+										width: "18px",
+										height: "18px",
+										borderRadius: "50%",
+										cursor: "pointer",
+										padding: 0,
+										transition: "transform 0.1s",
+									}}
+									onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.2)")}
+									onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")}
+								/>
+							))}
+						</div>
+					)}
+				</div>
 
 				{/* Delete button — two-step: click once to confirm, click again to delete */}
 				<button
@@ -322,36 +356,135 @@ function StickyNote() {
 				</button>
 			</div>
 
-			{/* Title */}
-			{note.title && (
-				<div
+			{/* Title — double-click to edit */}
+			{editingTitle ? (
+				<input
+					autoFocus
+					value={editTitle}
+					onChange={(e) => setEditTitle(e.target.value)}
+					onBlur={() => {
+						setEditingTitle(false);
+						const newTitle = editTitle.trim() || undefined;
+						if (newTitle !== note.title) {
+							invoke<Note | null>("update_note_body", {
+								id: note.id,
+								body: note.body,
+								title: newTitle ?? "",
+							}).then((updated) => {
+								if (updated) setNote(updated);
+							});
+						}
+					}}
+					onKeyDown={(e) => {
+						if (e.key === "Enter") {
+							(e.target as HTMLInputElement).blur();
+						}
+						if (e.key === "Escape") {
+							setEditingTitle(false);
+							setEditTitle(note.title ?? "");
+						}
+					}}
+					onMouseDown={(e) => e.stopPropagation()}
+					placeholder="Title"
 					style={{
 						fontWeight: 600,
 						fontSize: "14px",
 						marginBottom: "8px",
-						paddingRight: "24px",
+						paddingRight: "60px",
 						lineHeight: 1.3,
+						background: "rgba(0,0,0,0.04)",
+						color: colors.text,
+						border: "1px solid rgba(0,0,0,0.1)",
+						borderRadius: "4px",
+						padding: "4px 8px",
+						outline: "none",
+						width: "100%",
+						boxSizing: "border-box",
+						fontFamily: "inherit",
+						cursor: "text",
+					}}
+				/>
+			) : (
+				<div
+					onDoubleClick={() => {
+						setEditTitle(note.title ?? "");
+						setEditingTitle(true);
+					}}
+					style={{
+						fontWeight: 600,
+						fontSize: note.title ? "14px" : "12px",
+						marginBottom: "8px",
+						paddingRight: "60px",
+						lineHeight: 1.3,
+						cursor: "text",
+						opacity: note.title ? 1 : 0.35,
 					}}
 				>
-					{note.title}
+					{note.title || "Add title..."}
 				</div>
 			)}
 
-			{/* Body */}
-			<div
-				className="md-body"
-				style={{
-					flex: 1,
-					fontSize: "13px",
-					lineHeight: 1.5,
-					overflowY: "auto",
-					paddingRight: "4px",
-					wordBreak: "break-word",
-				}}
-				dangerouslySetInnerHTML={{
-					__html: renderedBody,
-				}}
-			/>
+			{/* Body — click to edit, blur to save */}
+			{editing ? (
+				<textarea
+					autoFocus
+					value={editBody}
+					onChange={(e) => setEditBody(e.target.value)}
+					onBlur={() => {
+						setEditing(false);
+						if (editBody !== note.body) {
+							invoke<Note | null>("update_note_body", {
+								id: note.id,
+								body: editBody,
+							}).then((updated) => {
+								if (updated) setNote(updated);
+							});
+						}
+					}}
+					onKeyDown={(e) => {
+						if (e.key === "Escape") {
+							setEditing(false);
+							setEditBody(note.body);
+						}
+					}}
+					onMouseDown={(e) => e.stopPropagation()}
+					style={{
+						flex: 1,
+						fontSize: "13px",
+						lineHeight: 1.5,
+						fontFamily: "'SF Mono', 'Menlo', 'Consolas', monospace",
+						background: "rgba(0,0,0,0.04)",
+						color: colors.text,
+						border: "1px solid rgba(0,0,0,0.1)",
+						borderRadius: "4px",
+						padding: "8px",
+						resize: "none",
+						outline: "none",
+						cursor: "text",
+						userSelect: "text",
+					}}
+				/>
+			) : (
+				<div
+					className="md-body"
+					onDoubleClick={() => {
+						setEditBody(note.body);
+						setEditing(true);
+					}}
+					style={{
+						flex: 1,
+						fontSize: "13px",
+						lineHeight: 1.5,
+						overflowY: "auto",
+						paddingRight: "4px",
+						wordBreak: "break-word",
+						cursor: "text",
+					}}
+					dangerouslySetInnerHTML={{
+						__html: renderedBody,
+					}}
+				/>
+			)}
 
 			{/* Timestamp */}
 			<div
