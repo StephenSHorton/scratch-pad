@@ -29,3 +29,8 @@ dirs = "5"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-foundation = { version = "0.3", features = ["NSNotification", "NSOperation"] }
+objc2-app-kit = { version = "0.3", features = ["NSApplication"] }
+block2 = "0.6"
+

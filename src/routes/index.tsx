@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 // Note type
@@ -178,6 +179,16 @@ function StickyNote() {
 		invoke<Note | null>("get_note", { id: noteId }).then((n) => {
 			if (n) setNote(n);
 		});
+
+		// Listen for updates pushed from the backend (e.g. MCP server edits)
+		const unlisten = listen<Note>("note-updated", (event) => {
+			if (event.payload.id === noteId) {
+				setNote(event.payload);
+			}
+		});
+		return () => {
+			unlisten.then((fn) => fn());
+		};
 	}, []);
 
 	// Save position when window is moved

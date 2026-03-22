@@ -8,7 +8,7 @@ use std::thread;
 use std::time::Duration;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_updater::UpdaterExt;
 
@@ -241,9 +241,14 @@ fn sync_windows(app: &AppHandle, state: &NotesState) {
         }
     }
 
-    // Create windows for new/existing notes
+    // Create windows for new notes, update existing ones
     for (i, note) in notes.iter().enumerate() {
-        create_note_window(app, note, i);
+        if let Some(window) = app.get_webview_window(&note.id) {
+            // Window already exists — push updated data to the frontend
+            window.emit("note-updated", note.clone()).ok();
+        } else {
+            create_note_window(app, note, i);
+        }
     }
 
     // Update the shared state
@@ -434,6 +439,41 @@ pub fn run() {
                 }
             });
 
+            // macOS: create a blank note when app is re-focused with no notes
+            #[cfg(target_os = "macos")]
+            {
+                use objc2_app_kit::NSApplicationDidBecomeActiveNotification;
+                use std::ptr::NonNull;
+                use std::sync::atomic::{AtomicBool, Ordering};
+
+                let activation_handle = app.handle().clone();
+                // Skip the first activation (app startup) — the welcome note handles that
+                let first_activation = AtomicBool::new(true);
+
+                let block = block2::RcBlock::new(move |_notification: NonNull<objc2_foundation::NSNotification>| {
+                    if first_activation.swap(false, Ordering::Relaxed) {
+                        return;
+                    }
+                    let notes = read_notes();
+                    if notes.is_empty() {
+                        create_blank_note();
+                        let state = activation_handle.state::<NotesState>();
+                        sync_windows(&activation_handle, &state);
+                    }
+                });
+
+                unsafe {
+                    let center = objc2_foundation::NSNotificationCenter::defaultCenter();
+                    let _observer = center.addObserverForName_object_queue_usingBlock(
+                        Some(NSApplicationDidBecomeActiveNotification),
+                        None,
+                        Some(&objc2_foundation::NSOperationQueue::mainQueue()),
+                        &block,
+                    );
+                    std::mem::forget(_observer);
+                }
+            }
+
             // Check for updates on startup (after a short delay)
             let update_handle = app.handle().clone();
             thread::spawn(move || {
@@ -447,8 +487,21 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(|_app_handle, event| {
-        if let RunEvent::ExitRequested { api, .. } = event {
-            api.prevent_exit();
+        match event {
+            RunEvent::ExitRequested { api, .. } => {
+                api.prevent_exit();
+            }
+            #[cfg(target_os = "macos")]
+            RunEvent::Reopen { .. } => {
+                // Spotlight / dock icon click with no visible windows
+                let notes = read_notes();
+                if notes.is_empty() {
+                    create_blank_note();
+                    let state = _app_handle.state::<NotesState>();
+                    sync_windows(_app_handle, &state);
+                }
+            }
+            _ => {}
         }
     });
 }
