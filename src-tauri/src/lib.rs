@@ -282,7 +282,10 @@ pub fn run() {
                 "Scratch Pad",
                 true,
                 &[
-                    &PredefinedMenuItem::about(app, Some("About Scratch Pad"), None)?,
+                    &PredefinedMenuItem::about(app, Some("About Scratch Pad"), Some(tauri::menu::AboutMetadata {
+                        version: Some(app.config().version.clone().unwrap_or_default()),
+                        ..Default::default()
+                    }))?,
                     &MenuItem::with_id(app, "check_updates", "Check for Updates...", true, None::<&str>)?,
                     &PredefinedMenuItem::separator(app)?,
                     &PredefinedMenuItem::hide(app, None)?,
