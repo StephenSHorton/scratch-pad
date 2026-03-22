@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Scratch Pad — Desktop notes for Claude Code</title>
+	<meta name="description" content="Floating desktop notes that Claude Code can read and write. Leave context between sessions, see your thoughts on screen.">
+	<link rel="icon" href="icon.png" type="image/png">
+	<link rel="stylesheet" href="style.css">
+</head>
+<body>
+	<main>
+		<section class="hero">
+			<img src="icon.png" alt="Scratch Pad icon" class="app-icon" width="128" height="128">
+			<h1>Scratch Pad</h1>
+			<p class="tagline">Desktop notes for Claude Code</p>
+			<p class="subtitle">Floating sticky notes that Claude can read and write. Leave yourself context between sessions. See your plans on screen.</p>
+			<div class="download-buttons">
+				<a href="https://github.com/StephenSHorton/scratch-pad/releases/latest" class="btn btn-primary">Download for macOS</a>
+				<a href="https://github.com/StephenSHorton/scratch-pad" class="btn btn-secondary">View on GitHub</a>
+			</div>
+			<p class="platform-note">macOS 10.15+ &middot; Apple Silicon &amp; Intel &middot; Free &amp; open source</p>
+		</section>
+
+		<section class="features">
+			<div class="feature-grid">
+				<div class="feature-card" style="--accent: #FFF9C4;">
+					<h3>Floating Notes</h3>
+					<p>Borderless sticky notes that float on your desktop. Always visible while you work. Drag them anywhere.</p>
+				</div>
+				<div class="feature-card" style="--accent: #F8BBD0;">
+					<h3>Markdown Support</h3>
+					<p>Full markdown rendering — headers, code blocks, lists, bold, italic. Double-click to edit any note.</p>
+				</div>
+				<div class="feature-card" style="--accent: #BBDEFB;">
+					<h3>Claude Integration</h3>
+					<p>Built-in MCP server lets Claude Code create, read, and update your notes directly. No copy-pasting.</p>
+				</div>
+				<div class="feature-card" style="--accent: #C8E6C9;">
+					<h3>Session Handoff</h3>
+					<p>Claude can leave plans, summaries, and context for your next session. Pick up right where you left off.</p>
+				</div>
+			</div>
+		</section>
+
+		<section class="how-it-works">
+			<h2>How it works</h2>
+			<div class="steps">
+				<div class="step">
+					<span class="step-number">1</span>
+					<div>
+						<h3>Install the app</h3>
+						<p>Download the DMG, drag to Applications, and open Scratch Pad. It lives in your menu bar.</p>
+					</div>
+				</div>
+				<div class="step">
+					<span class="step-number">2</span>
+					<div>
+						<h3>Connect Claude Code</h3>
+						<p>Run one command to register the MCP server:</p>
+						<pre><code>claude mcp add scratch-pad -- \
+  "/Applications/Scratch Pad.app/Contents/MacOS/scratch-pad-mcp"</code></pre>
+					</div>
+				</div>
+				<div class="step">
+					<span class="step-number">3</span>
+					<div>
+						<h3>Start using it</h3>
+						<p>Ask Claude to create a note, leave a plan, or summarize your session. Notes appear instantly on your desktop.</p>
+					</div>
+				</div>
+			</div>
+		</section>
+
+		<section class="mcp-tools">
+			<h2>MCP Tools</h2>
+			<p class="section-subtitle">Five tools Claude Code can use to manage your notes.</p>
+			<div class="tools-grid">
+				<div class="tool">
+					<code>note_create</code>
+					<p>Create a new note with a title, markdown body, and color</p>
+				</div>
+				<div class="tool">
+					<code>note_list</code>
+					<p>List all active notes</p>
+				</div>
+				<div class="tool">
+					<code>note_read</code>
+					<p>Read a specific note's content</p>
+				</div>
+				<div class="tool">
+					<code>note_update</code>
+					<p>Update a note's title, body, or color</p>
+				</div>
+				<div class="tool">
+					<code>note_clear</code>
+					<p>Delete one or all notes</p>
+				</div>
+			</div>
+		</section>
+
+		<section class="install-notes">
+			<h2>Installation Notes</h2>
+			<div class="notice">
+				<p><strong>First launch on macOS:</strong> The app is not yet signed with an Apple Developer certificate. After installing, you may need to remove the quarantine flag:</p>
+				<pre><code>xattr -cr /Applications/Scratch\ Pad.app</code></pre>
+				<p>Then open the app normally from Applications.</p>
+			</div>
+		</section>
+
+		<footer>
+			<p>
+				Built with <a href="https://v2.tauri.app">Tauri</a> &middot;
+				<a href="https://github.com/StephenSHorton/scratch-pad">Source on GitHub</a> &middot;
+				MIT License
+			</p>
+		</footer>
+	</main>
+</body>
+</html>

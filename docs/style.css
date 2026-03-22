@@ -1,0 +1,342 @@
+*,
+*::before,
+*::after {
+	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
+}
+
+:root {
+	--bg: #1a1a1a;
+	--bg-surface: #242424;
+	--bg-elevated: #2e2e2e;
+	--text: #e8e8e8;
+	--text-muted: #999;
+	--accent: #f5c542;
+	--accent-hover: #f7d06b;
+	--radius: 12px;
+	--font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+	--mono: "SF Mono", "Fira Code", "Fira Mono", Menlo, monospace;
+}
+
+html {
+	font-size: 16px;
+	scroll-behavior: smooth;
+}
+
+body {
+	font-family: var(--font);
+	background: var(--bg);
+	color: var(--text);
+	line-height: 1.6;
+	-webkit-font-smoothing: antialiased;
+}
+
+main {
+	max-width: 720px;
+	margin: 0 auto;
+	padding: 0 24px;
+}
+
+/* Hero */
+
+.hero {
+	text-align: center;
+	padding: 80px 0 64px;
+}
+
+.app-icon {
+	border-radius: 24px;
+	margin-bottom: 24px;
+	filter: drop-shadow(0 4px 24px rgba(245, 197, 66, 0.2));
+}
+
+.hero h1 {
+	font-size: 3rem;
+	font-weight: 700;
+	letter-spacing: -0.02em;
+	margin-bottom: 8px;
+}
+
+.tagline {
+	font-size: 1.25rem;
+	color: var(--accent);
+	font-weight: 500;
+	margin-bottom: 16px;
+}
+
+.subtitle {
+	font-size: 1.1rem;
+	color: var(--text-muted);
+	max-width: 480px;
+	margin: 0 auto 32px;
+	line-height: 1.5;
+}
+
+.download-buttons {
+	display: flex;
+	gap: 12px;
+	justify-content: center;
+	flex-wrap: wrap;
+	margin-bottom: 16px;
+}
+
+.btn {
+	display: inline-block;
+	padding: 12px 28px;
+	border-radius: 8px;
+	font-size: 1rem;
+	font-weight: 600;
+	text-decoration: none;
+	transition: all 0.15s ease;
+}
+
+.btn-primary {
+	background: var(--accent);
+	color: #1a1a1a;
+}
+
+.btn-primary:hover {
+	background: var(--accent-hover);
+	transform: translateY(-1px);
+	box-shadow: 0 4px 16px rgba(245, 197, 66, 0.3);
+}
+
+.btn-secondary {
+	background: var(--bg-elevated);
+	color: var(--text);
+	border: 1px solid #444;
+}
+
+.btn-secondary:hover {
+	background: #383838;
+	border-color: #555;
+	transform: translateY(-1px);
+}
+
+.platform-note {
+	font-size: 0.85rem;
+	color: var(--text-muted);
+}
+
+/* Features */
+
+.features {
+	padding: 48px 0;
+}
+
+.feature-grid {
+	display: grid;
+	grid-template-columns: repeat(2, 1fr);
+	gap: 16px;
+}
+
+.feature-card {
+	background: var(--bg-surface);
+	border-radius: var(--radius);
+	padding: 24px;
+	border-left: 3px solid var(--accent);
+}
+
+.feature-card h3 {
+	font-size: 1rem;
+	font-weight: 600;
+	margin-bottom: 6px;
+}
+
+.feature-card p {
+	font-size: 0.9rem;
+	color: var(--text-muted);
+	line-height: 1.5;
+}
+
+/* How it works */
+
+.how-it-works {
+	padding: 48px 0;
+}
+
+.how-it-works h2,
+.mcp-tools h2,
+.install-notes h2 {
+	font-size: 1.5rem;
+	font-weight: 700;
+	margin-bottom: 8px;
+}
+
+.section-subtitle {
+	color: var(--text-muted);
+	margin-bottom: 24px;
+}
+
+.steps {
+	display: flex;
+	flex-direction: column;
+	gap: 24px;
+	margin-top: 24px;
+}
+
+.step {
+	display: flex;
+	gap: 16px;
+	align-items: flex-start;
+}
+
+.step-number {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 36px;
+	height: 36px;
+	border-radius: 50%;
+	background: var(--accent);
+	color: #1a1a1a;
+	font-weight: 700;
+	font-size: 0.9rem;
+	flex-shrink: 0;
+}
+
+.step h3 {
+	font-size: 1rem;
+	font-weight: 600;
+	margin-bottom: 4px;
+}
+
+.step p {
+	font-size: 0.9rem;
+	color: var(--text-muted);
+	line-height: 1.5;
+}
+
+pre {
+	background: var(--bg);
+	border: 1px solid #333;
+	border-radius: 8px;
+	padding: 12px 16px;
+	overflow-x: auto;
+	margin-top: 8px;
+}
+
+code {
+	font-family: var(--mono);
+	font-size: 0.85rem;
+}
+
+pre code {
+	color: var(--text);
+}
+
+/* MCP Tools */
+
+.mcp-tools {
+	padding: 48px 0;
+}
+
+.tools-grid {
+	display: grid;
+	grid-template-columns: repeat(2, 1fr);
+	gap: 12px;
+}
+
+.tool {
+	background: var(--bg-surface);
+	border-radius: var(--radius);
+	padding: 16px 20px;
+}
+
+.tool code {
+	color: var(--accent);
+	font-weight: 600;
+	font-size: 0.9rem;
+}
+
+.tool p {
+	font-size: 0.85rem;
+	color: var(--text-muted);
+	margin-top: 4px;
+	line-height: 1.4;
+}
+
+/* Install notes */
+
+.install-notes {
+	padding: 48px 0;
+}
+
+.notice {
+	background: var(--bg-surface);
+	border: 1px solid #444;
+	border-radius: var(--radius);
+	padding: 20px 24px;
+	margin-top: 16px;
+}
+
+.notice p {
+	font-size: 0.9rem;
+	color: var(--text-muted);
+	line-height: 1.5;
+}
+
+.notice p + pre {
+	margin-top: 12px;
+	margin-bottom: 12px;
+}
+
+.notice strong {
+	color: var(--text);
+}
+
+/* Footer */
+
+footer {
+	padding: 48px 0;
+	text-align: center;
+	border-top: 1px solid #333;
+}
+
+footer p {
+	font-size: 0.85rem;
+	color: var(--text-muted);
+}
+
+footer a {
+	color: var(--text-muted);
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+
+footer a:hover {
+	color: var(--text);
+}
+
+/* Responsive */
+
+@media (max-width: 600px) {
+	.hero {
+		padding: 48px 0 40px;
+	}
+
+	.hero h1 {
+		font-size: 2.25rem;
+	}
+
+	.subtitle {
+		font-size: 1rem;
+	}
+
+	.feature-grid,
+	.tools-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.download-buttons {
+		flex-direction: column;
+		align-items: center;
+	}
+
+	.btn {
+		width: 100%;
+		max-width: 280px;
+		text-align: center;
+	}
+}
