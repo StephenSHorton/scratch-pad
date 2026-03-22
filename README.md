@@ -17,13 +17,19 @@ Floating desktop notes that Claude can create, read, update, and delete via MCP.
 
 ## Install
 
-1. Download the latest `.dmg` from the [Releases](https://github.com/stephenhorton/scratch-pad/releases) page
-2. Drag to Applications
-3. On first launch, if macOS says "damaged", run:
+1. Download the latest `.dmg` from the [Releases](https://github.com/StephenSHorton/scratch-pad/releases) page
+2. Open the DMG and drag Scratch Pad to Applications
+3. Run this command to remove the macOS quarantine flag:
 
 ```bash
 xattr -cr /Applications/Scratch\ Pad.app
 ```
+
+4. Open Scratch Pad from Applications
+
+### Why do I need the xattr command?
+
+macOS quarantines apps that aren't signed with an Apple Developer certificate. Since Scratch Pad is not yet code-signed, macOS will show a "damaged" warning and refuse to open it. The `xattr -cr` command removes the quarantine attribute so macOS allows the app to run. This is safe -- you can verify the source code in this repo. Apple Developer code signing is planned for a future release.
 
 ## MCP Setup for Claude Code
 
