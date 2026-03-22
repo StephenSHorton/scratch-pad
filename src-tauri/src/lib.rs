@@ -338,7 +338,7 @@ pub fn run() {
                     }
                     "check_updates" => {
                         let h = handle.clone();
-                        tauri::async_runtime::spawn(check_for_updates(h));
+                        tauri::async_runtime::spawn(check_for_updates(h, false));
                     }
                     "tray_quit" => {
                         std::process::exit(0);
@@ -433,7 +433,7 @@ pub fn run() {
             let update_handle = app.handle().clone();
             thread::spawn(move || {
                 thread::sleep(Duration::from_secs(5));
-                tauri::async_runtime::block_on(check_for_updates(update_handle));
+                tauri::async_runtime::block_on(check_for_updates(update_handle, true));
             });
 
             Ok(())
@@ -448,7 +448,7 @@ pub fn run() {
     });
 }
 
-async fn check_for_updates(handle: AppHandle) {
+async fn check_for_updates(handle: AppHandle, silent: bool) {
     let updater = match handle.updater() {
         Ok(u) => u,
         Err(e) => {
@@ -463,15 +463,79 @@ async fn check_for_updates(handle: AppHandle) {
                 "Update available: {} -> {}",
                 update.current_version, update.version
             );
+            // Show update note
+            let note = Note {
+                id: "update-status".to_string(),
+                title: Some("Updating Scratch Pad".to_string()),
+                body: format!(
+                    "Downloading **v{}**...\n\nThe update will take effect next time you launch the app.",
+                    update.version
+                ),
+                color: "blue".to_string(),
+                created_at: Utc::now().to_rfc3339(),
+                expires_at: None,
+                position: None,
+            };
+            let mut notes = read_notes();
+            notes.retain(|n| n.id != "update-status");
+            notes.push(note);
+            write_notes(&notes);
+
             if let Err(e) = update.download_and_install(|_, _| {}, || {}).await {
                 eprintln!("Failed to install update: {e}");
+            } else {
+                // Update the note to show success
+                let mut notes = read_notes();
+                if let Some(n) = notes.iter_mut().find(|n| n.id == "update-status") {
+                    n.body = format!(
+                        "**v{}** installed! Restart Scratch Pad to use the new version.",
+                        update.version
+                    );
+                    n.title = Some("Update Ready".to_string());
+                    n.color = "green".to_string();
+                }
+                write_notes(&notes);
             }
         }
         Ok(None) => {
             eprintln!("No update available");
+            if !silent {
+                let note = Note {
+                    id: "update-status".to_string(),
+                    title: Some("No Updates".to_string()),
+                    body: "You're on the latest version.".to_string(),
+                    color: "green".to_string(),
+                    created_at: Utc::now().to_rfc3339(),
+                    expires_at: Some(
+                        (Utc::now() + chrono::Duration::seconds(10)).to_rfc3339(),
+                    ),
+                    position: None,
+                };
+                let mut notes = read_notes();
+                notes.retain(|n| n.id != "update-status");
+                notes.push(note);
+                write_notes(&notes);
+            }
         }
         Err(e) => {
             eprintln!("Update check failed: {e}");
+            if !silent {
+                let note = Note {
+                    id: "update-status".to_string(),
+                    title: Some("Update Check Failed".to_string()),
+                    body: format!("{e}"),
+                    color: "pink".to_string(),
+                    created_at: Utc::now().to_rfc3339(),
+                    expires_at: Some(
+                        (Utc::now() + chrono::Duration::seconds(15)).to_rfc3339(),
+                    ),
+                    position: None,
+                };
+                let mut notes = read_notes();
+                notes.retain(|n| n.id != "update-status");
+                notes.push(note);
+                write_notes(&notes);
+            }
         }
     }
 }
