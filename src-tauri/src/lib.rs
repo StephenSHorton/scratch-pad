@@ -458,7 +458,6 @@ fn create_note_window(app: &AppHandle, note: &Note, _index: usize) {
 }
 
 fn sync_windows(app: &AppHandle, state: &NotesState) {
-    log("Syncing windows");
     let mut notes = read_notes();
     let now = Utc::now();
 
