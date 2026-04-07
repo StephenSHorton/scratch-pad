@@ -4,10 +4,11 @@ Desktop sticky notes app (Tauri v2) + MCP server for Claude Code.
 
 ## Architecture
 
-- **Tauri app** (`src-tauri/`) — Rust backend, manages windows, file watching, system tray, auto-updater
+- **Tauri app** (`src-tauri/`) — Rust backend, manages windows, file watching, system tray, auto-updater, P2P networking
 - **Frontend** (`src/`) — React 19, Tailwind v4, Vite 8, TanStack Router
-- **MCP server** (`mcp-server/`) — TypeScript stdio server with 5 tools: `note_create`, `note_list`, `note_read`, `note_update`, `note_clear`
-- **Shared contract** — `~/.scratch-pad/notes.json` (both app and MCP server read/write this file)
+- **MCP server** (`mcp-server/`) — TypeScript stdio server with 8 tools for notes + 3 tools for multiplayer
+- **P2P networking** (`src-tauri/src/network/`) — mDNS discovery + TCP transport for LAN-based note sharing
+- **Shared contract** — `~/.scratch-pad/notes.json` (local notes), `~/.scratch-pad/remote-notes.json` (peer notes), `~/.scratch-pad/peers.json` (connected peers)
 
 ## Development
 
@@ -53,10 +54,11 @@ The release workflow:
 ## Key files
 
 - `src-tauri/tauri.conf.json` — App config, version, bundle settings, updater pubkey
-- `src-tauri/src/lib.rs` — All Rust logic (commands, window management, tray, file watcher, updater)
-- `src/routes/index.tsx` — Sticky note React component (markdown rendering, editing, color picker)
+- `src-tauri/src/lib.rs` — Core Rust logic (commands, window management, tray, file watcher, updater)
+- `src-tauri/src/network/` — P2P networking module (discovery, transport, protocol, store)
+- `src/routes/index.tsx` — Sticky note React component (markdown rendering, editing, color picker, remote note display)
 - `src/index.css` — Markdown rendering styles (`.md-body` classes)
-- `mcp-server/src/index.ts` — MCP server implementation
+- `mcp-server/src/index.ts` — MCP server implementation (local + multiplayer tools)
 - `.github/workflows/release.yml` — CI/CD for building and publishing releases
 - `src-tauri/icons/tray-icon.png` — System tray icon (embedded at compile time via `include_bytes!`)
 
@@ -72,6 +74,52 @@ To rebuild the sidecar locally:
 ```bash
 bun run build:mcp
 ```
+
+## Multiplayer (P2P Networking)
+
+Scratch Pad instances on the same LAN automatically discover each other via mDNS and can share notes in real-time over TCP. This enables a **Decentralized Claude Network** where Claude Code instances share context, decisions, and updates without a central server.
+
+### How it works
+
+1. Each running Scratch Pad app registers itself on the local network via mDNS (`_scratchpad._tcp.local.`)
+2. Peers discover each other automatically — no configuration needed
+3. Notes created with a `scope` other than `"local"` get broadcast to all connected peers
+4. Remote notes appear as read-only floating stickies with sender attribution
+5. Everything is ephemeral — remote notes evaporate when sessions end
+
+### Data flow
+
+```
+Claude Code --MCP--> note_create(scope: "team") --> notes.json + .share-{id} signal
+Tauri file watcher picks up signal --> wraps note in envelope --> broadcasts via TCP
+Peer receives --> stores in memory --> writes remote-notes.json --> creates window
+```
+
+### Filesystem contract
+
+| File | Purpose | Written by |
+|------|---------|------------|
+| `~/.scratch-pad/notes.json` | Local notes | Tauri app + MCP server |
+| `~/.scratch-pad/remote-notes.json` | Notes from peers | Tauri app (network module) |
+| `~/.scratch-pad/peers.json` | Connected peers | Tauri app (network module) |
+| `~/.scratch-pad/subscriptions.json` | Scope filter prefs | MCP server (`pad_subscribe`) |
+| `~/.scratch-pad/.share-{noteId}` | Signal: share a note | MCP server (transient) |
+| `~/.scratch-pad/.retract-{noteId}` | Signal: retract a note | MCP server (transient) |
+
+### Network module structure (`src-tauri/src/network/`)
+
+- `protocol.rs` — Wire types: `NoteEnvelope`, `NoteScope`, `NoteIntent`, `Message` (Hello/Note/Retract/Heartbeat/Sync), `PeerInfo`
+- `discovery.rs` — mDNS registration and browsing via `mdns-sd` crate
+- `transport.rs` — TCP listener/client with length-prefixed JSON framing, heartbeat, dedup, reconnect
+- `store.rs` — In-memory remote note store with TTL sweep, capacity limits, disk sync
+- `mod.rs` — `NetworkHandle` API and `start_network()` orchestrator
+
+### Design constraints
+
+- **Ephemeral:** Remote notes live in memory only. Nothing persists across restarts.
+- **No auth:** Scoping (`team`, named groups) is for relevance routing, not security. LAN-only.
+- **No gossip:** Direct peer connections only. Practical for teams up to ~20.
+- **Graceful degradation:** If mDNS or TCP fails, local notes work normally.
 
 ## Signing
 
