@@ -30,7 +30,7 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: 'Scratch Pad ${{ github.ref_name }}'
           releaseBody: 'See the assets below to download and install.'
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: --target aarch64-apple-darwin
 
@@ -58,7 +58,7 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: 'Scratch Pad ${{ github.ref_name }}'
           releaseBody: 'See the assets below to download and install.'
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: --target x86_64-apple-darwin
 
