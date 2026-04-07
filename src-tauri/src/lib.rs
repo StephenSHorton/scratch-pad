@@ -1,3 +1,5 @@
+mod network;
+
 use chrono::{DateTime, Utc};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
@@ -218,6 +220,96 @@ fn update_note_position(id: String, x: f64, y: f64, state: tauri::State<'_, Note
 }
 
 // ---------------------------------------------------------------------------
+// Network commands
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+async fn get_peers(
+    network: tauri::State<'_, network::NetworkHandle>,
+) -> Result<Vec<network::protocol::PeerInfo>, String> {
+    Ok(network.peers())
+}
+
+#[tauri::command]
+async fn get_remote_notes(
+    network: tauri::State<'_, network::NetworkHandle>,
+) -> Result<Vec<network::protocol::NoteEnvelope>, String> {
+    Ok(network.remote_notes())
+}
+
+#[tauri::command]
+async fn get_remote_note(
+    id: String,
+    network: tauri::State<'_, network::NetworkHandle>,
+) -> Result<Option<network::protocol::NoteEnvelope>, String> {
+    Ok(network.remote_notes().into_iter().find(|n| n.id == id))
+}
+
+#[tauri::command]
+async fn share_note(
+    id: String,
+    scope: String,
+    intent: String,
+    network: tauri::State<'_, network::NetworkHandle>,
+    notes_state: tauri::State<'_, NotesState>,
+) -> Result<(), String> {
+    let note = {
+        let notes = notes_state
+            .notes
+            .lock()
+            .map_err(|e| format!("Failed to lock notes: {e}"))?;
+        notes
+            .iter()
+            .find(|n| n.id == id)
+            .cloned()
+            .ok_or_else(|| format!("Note {id} not found"))?
+    };
+
+    let parsed_scope = match scope.as_str() {
+        "team" => network::protocol::NoteScope::Team,
+        "local" => network::protocol::NoteScope::Local,
+        s if s.starts_with("group:") => {
+            network::protocol::NoteScope::Group(s[6..].to_string())
+        }
+        _ => network::protocol::NoteScope::Team,
+    };
+
+    let parsed_intent = match intent.as_str() {
+        "decision" => network::protocol::NoteIntent::Decision,
+        "question" => network::protocol::NoteIntent::Question,
+        "context" => network::protocol::NoteIntent::Context,
+        "handoff" => network::protocol::NoteIntent::Handoff,
+        "fyi" => network::protocol::NoteIntent::Fyi,
+        _ => network::protocol::NoteIntent::Fyi,
+    };
+
+    let envelope = network::protocol::NoteEnvelope {
+        id: note.id,
+        sender: network.display_name.clone(),
+        sender_id: network.node_id.clone(),
+        scope: parsed_scope,
+        intent: parsed_intent,
+        title: note.title,
+        body: note.body,
+        color: note.color,
+        timestamp: Utc::now().timestamp_millis(),
+        ttl: 0,
+    };
+
+    network.share_note(envelope);
+    Ok(())
+}
+
+#[tauri::command]
+async fn retract_note(
+    id: String,
+    network: tauri::State<'_, network::NetworkHandle>,
+) -> Result<(), String> {
+    network.retract_note(&id);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Window management
 // ---------------------------------------------------------------------------
 
@@ -415,6 +507,67 @@ fn sync_windows(app: &AppHandle, state: &NotesState) {
     if let Ok(mut state_notes) = state.notes.lock() {
         *state_notes = notes;
     }
+
+    // Handle remote notes (if network is available)
+    if let Some(network) = app.try_state::<network::NetworkHandle>() {
+        let remote_notes = network.remote_notes();
+        let remote_ids: Vec<String> = remote_notes
+            .iter()
+            .map(|n| format!("remote-{}", n.id))
+            .collect();
+
+        // Close windows for remote notes that no longer exist
+        // Collect all window labels that start with "remote-"
+        // We check against the remote_ids list
+        for envelope in &remote_notes {
+            let label = format!("remote-{}", envelope.id);
+            if let Some(window) = app.get_webview_window(&label) {
+                // Window exists — emit update
+                window.emit("note-updated", &envelope).ok();
+            } else {
+                // Create a window for this remote note
+                let remote_note = Note {
+                    id: label.clone(),
+                    title: envelope.title.clone(),
+                    body: envelope.body.clone(),
+                    color: envelope.color.clone(),
+                    created_at: chrono::DateTime::from_timestamp_millis(envelope.timestamp)
+                        .unwrap_or_else(|| Utc::now())
+                        .to_rfc3339(),
+                    expires_at: None,
+                    position: None,
+                    size: None,
+                };
+                create_note_window(app, &remote_note, 0);
+            }
+        }
+
+        // Close remote windows that are no longer in the remote notes list
+        // We need to check all windows and close ones with "remote-" prefix not in remote_ids
+        if let Ok(existing_local) = state.notes.lock() {
+            // Get all window labels we know about
+            for local_note in existing_local.iter() {
+                // Skip local notes (handled above)
+                if !local_note.id.starts_with("remote-") {
+                    continue;
+                }
+                if !remote_ids.contains(&local_note.id) {
+                    if let Some(window) = app.get_webview_window(&local_note.id) {
+                        window.close().ok();
+                    }
+                }
+            }
+        }
+
+        // Also check for stale remote windows by reading remote-notes from disk
+        // and closing any windows whose IDs are gone
+        let remote_notes_file = notes_dir().join("remote-notes.json");
+        if remote_notes_file.exists() {
+            // We already have remote_ids from the network handle
+            // Close any "remote-*" windows not in that set
+            // This is best-effort via the webview window listing
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -441,7 +594,12 @@ pub fn run() {
             dismiss_note,
             update_note_body,
             update_note_color,
-            update_note_position
+            update_note_position,
+            get_peers,
+            get_remote_notes,
+            get_remote_note,
+            share_note,
+            retract_note
         ])
         .setup(|app| {
             // Build the macOS menu bar
@@ -636,10 +794,89 @@ pub fn run() {
                                         let state = handle.state::<NotesState>();
                                         sync_windows(&handle, &state);
                                         organize_windows(&handle, &state);
-                                    } else {
-                                        let state = handle.state::<NotesState>();
-                                        sync_windows(&handle, &state);
+                                        return;
                                     }
+
+                                    // Check for share signal files (.share-{noteId})
+                                    let dir = notes_dir();
+                                    if let Ok(entries) = fs::read_dir(&dir) {
+                                        for entry in entries.flatten() {
+                                            let fname = entry.file_name().to_string_lossy().to_string();
+                                            if let Some(note_id) = fname.strip_prefix(".share-") {
+                                                let note_id = note_id.to_string();
+                                                let signal_path = entry.path();
+
+                                                // Read signal file contents (JSON with scope, intent)
+                                                let signal_data = fs::read_to_string(&signal_path).unwrap_or_default();
+                                                fs::remove_file(&signal_path).ok();
+
+                                                #[derive(serde::Deserialize)]
+                                                struct ShareSignal {
+                                                    #[serde(default = "default_scope")]
+                                                    scope: String,
+                                                    #[serde(default = "default_intent")]
+                                                    intent: String,
+                                                }
+                                                fn default_scope() -> String { "team".to_string() }
+                                                fn default_intent() -> String { "fyi".to_string() }
+
+                                                let signal: ShareSignal = serde_json::from_str(&signal_data)
+                                                    .unwrap_or(ShareSignal {
+                                                        scope: "team".to_string(),
+                                                        intent: "fyi".to_string(),
+                                                    });
+
+                                                if let Some(network) = handle.try_state::<network::NetworkHandle>() {
+                                                    // Find the note
+                                                    let notes = read_notes();
+                                                    if let Some(note) = notes.iter().find(|n| n.id == note_id) {
+                                                        let parsed_scope = match signal.scope.as_str() {
+                                                            "team" => network::protocol::NoteScope::Team,
+                                                            "local" => network::protocol::NoteScope::Local,
+                                                            s if s.starts_with("group:") => {
+                                                                network::protocol::NoteScope::Group(s[6..].to_string())
+                                                            }
+                                                            _ => network::protocol::NoteScope::Team,
+                                                        };
+
+                                                        let parsed_intent = match signal.intent.as_str() {
+                                                            "decision" => network::protocol::NoteIntent::Decision,
+                                                            "question" => network::protocol::NoteIntent::Question,
+                                                            "context" => network::protocol::NoteIntent::Context,
+                                                            "handoff" => network::protocol::NoteIntent::Handoff,
+                                                            _ => network::protocol::NoteIntent::Fyi,
+                                                        };
+
+                                                        let envelope = network::protocol::NoteEnvelope {
+                                                            id: note.id.clone(),
+                                                            sender: network.display_name.clone(),
+                                                            sender_id: network.node_id.clone(),
+                                                            scope: parsed_scope,
+                                                            intent: parsed_intent,
+                                                            title: note.title.clone(),
+                                                            body: note.body.clone(),
+                                                            color: note.color.clone(),
+                                                            timestamp: chrono::Utc::now().timestamp_millis(),
+                                                            ttl: 0,
+                                                        };
+                                                        network.share_note(envelope);
+                                                        log(&format!("Shared note {note_id} via signal file"));
+                                                    }
+                                                }
+                                            } else if let Some(note_id) = fname.strip_prefix(".retract-") {
+                                                let note_id = note_id.to_string();
+                                                fs::remove_file(entry.path()).ok();
+
+                                                if let Some(network) = handle.try_state::<network::NetworkHandle>() {
+                                                    network.retract_note(&note_id);
+                                                    log(&format!("Retracted note {note_id} via signal file"));
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    let state = handle.state::<NotesState>();
+                                    sync_windows(&handle, &state);
                                 }
                                 _ => {}
                             }
@@ -655,6 +892,13 @@ pub fn run() {
                 loop {
                     thread::sleep(Duration::from_secs(60));
                 }
+            });
+
+            // Start P2P network
+            let network_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let network = network::start_network(network_handle.clone()).await;
+                network_handle.manage(network);
             });
 
             // macOS: create a blank note when app is re-focused with no notes

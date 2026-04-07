@@ -23,12 +23,41 @@ interface Note {
   size: { width: number; height: number } | null;
 }
 
+interface NoteEnvelope {
+  id: string;
+  sender: string;
+  senderId: string;
+  scope: string;
+  intent: string;
+  title: string | null;
+  body: string;
+  color: string;
+  timestamp: number;
+  ttl: number;
+}
+
+interface PeerInfo {
+  nodeId: string;
+  name: string;
+  addr: string;
+  connectedAt: string;
+  lastSeen: string;
+}
+
 function notesDir(): string {
   return path.join(os.homedir(), ".scratch-pad");
 }
 
 function notesFile(): string {
   return path.join(notesDir(), "notes.json");
+}
+
+function remoteNotesFile(): string {
+  return path.join(notesDir(), "remote-notes.json");
+}
+
+function peersFile(): string {
+  return path.join(notesDir(), "peers.json");
 }
 
 function readNotes(): Note[] {
@@ -48,6 +77,43 @@ function writeNotes(notes: Note[]): void {
   fs.writeFileSync(notesFile(), JSON.stringify(notes, null, 2) + "\n", "utf-8");
 }
 
+function readRemoteNotes(): NoteEnvelope[] {
+  const file = remoteNotesFile();
+  if (!fs.existsSync(file)) return [];
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf-8"));
+  } catch {
+    return [];
+  }
+}
+
+function readPeers(): PeerInfo[] {
+  const file = peersFile();
+  if (!fs.existsSync(file)) return [];
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf-8"));
+  } catch {
+    return [];
+  }
+}
+
+function writeSignalFile(name: string, data?: object): void {
+  const dir = notesDir();
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  const file = path.join(dir, name);
+  fs.writeFileSync(file, data ? JSON.stringify(data) : "", "utf-8");
+}
+
+function formatAge(timestampMs: number): string {
+  const seconds = Math.floor((Date.now() - timestampMs) / 1000);
+  if (seconds < 60) return "just now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86400)}d ago`;
+}
+
 // ---------------------------------------------------------------------------
 // MCP Server
 // ---------------------------------------------------------------------------
@@ -61,7 +127,7 @@ const server = new McpServer({
 
 server.tool(
   "note_create",
-  "Create a new scratch pad note on the desktop. Supports markdown content. The note appears as a floating window the user can see. Do not repeat the title in the body — the title is displayed separately above the body.",
+  "Create a new scratch pad note on the desktop. Supports markdown content. The note appears as a floating window the user can see. Do not repeat the title in the body — the title is displayed separately above the body. Set scope to share the note with peers on the network.",
   {
     body: z.string().describe("The note content (do not include the title here — it is shown separately)"),
     title: z.string().optional().describe("Optional note title (displayed separately above the body)"),
@@ -74,8 +140,19 @@ server.tool(
       .number()
       .optional()
       .describe("Hours until the note auto-expires"),
+    scope: z
+      .enum(["local", "team"])
+      .or(z.string())
+      .optional()
+      .default("local")
+      .describe("Sharing scope: 'local' (default, no sharing), 'team' (share with all peers), or a named group"),
+    intent: z
+      .enum(["decision", "question", "context", "handoff", "fyi"])
+      .optional()
+      .default("fyi")
+      .describe("Note intent when sharing (default: fyi)"),
   },
-  async ({ body, title, color, ttl }) => {
+  async ({ body, title, color, ttl, scope, intent }) => {
     const now = new Date();
     const note: Note = {
       id: crypto.randomUUID(),
@@ -94,11 +171,16 @@ server.tool(
     notes.push(note);
     writeNotes(notes);
 
+    if (scope !== "local") {
+      writeSignalFile(`.share-${note.id}`, { scope, intent });
+    }
+
+    const shared = scope !== "local" ? ` | Shared to ${scope} [${intent}]` : "";
     return {
       content: [
         {
           type: "text" as const,
-          text: `Created note ${note.id}${note.title ? ` ("${note.title}")` : ""} [${note.color}]`,
+          text: `Created note ${note.id}${note.title ? ` ("${note.title}")` : ""} [${note.color}]${shared}`,
         },
       ],
     };
@@ -109,7 +191,7 @@ server.tool(
 
 server.tool(
   "note_list",
-  "List all active scratch pad notes with their full content",
+  "List all active scratch pad notes (local and network) with their full content",
   {},
   async () => {
     const notes = readNotes();
@@ -124,35 +206,47 @@ server.tool(
       writeNotes(active);
     }
 
+    let text = "";
+
     if (active.length === 0) {
-      return {
-        content: [{ type: "text" as const, text: "No active notes." }],
-      };
+      text = "No active local notes.";
+    } else {
+      const lines = active.map((n) => {
+        const parts = [`## ${n.title || "(untitled)"} [${n.color}]`, `ID: ${n.id}`];
+        parts.push(`Created: ${new Date(n.createdAt).toLocaleString()}`);
+        if (n.expiresAt) {
+          parts.push(`Expires: ${new Date(n.expiresAt).toLocaleString()}`);
+        }
+        if (n.position) {
+          parts.push(`Position: (${n.position.x}, ${n.position.y})`);
+        }
+        if (n.size) {
+          parts.push(`Size: ${n.size.width}x${n.size.height}`);
+        }
+        parts.push("", n.body);
+        return parts.join("\n");
+      });
+
+      text = `${active.length} active note(s):\n\n${lines.join("\n\n---\n\n")}`;
     }
 
-    const lines = active.map((n) => {
-      const parts = [`## ${n.title || "(untitled)"} [${n.color}]`, `ID: ${n.id}`];
-      parts.push(`Created: ${new Date(n.createdAt).toLocaleString()}`);
-      if (n.expiresAt) {
-        parts.push(`Expires: ${new Date(n.expiresAt).toLocaleString()}`);
+    const remoteNotes = readRemoteNotes();
+
+    if (remoteNotes.length > 0) {
+      text += `\n\n## Network Notes (${remoteNotes.length})\n\n`;
+      for (const rn of remoteNotes) {
+        const age = formatAge(rn.timestamp);
+        text += `### [${rn.intent}] from ${rn.sender} (${age})\n`;
+        if (rn.title) text += `**${rn.title}**\n`;
+        text += `${rn.body}\n`;
+        text += `ID: ${rn.id} | Scope: ${rn.scope} | TTL: ${rn.ttl === 0 ? "session" : rn.ttl + "s"}\n\n`;
       }
-      if (n.position) {
-        parts.push(`Position: (${n.position.x}, ${n.position.y})`);
-      }
-      if (n.size) {
-        parts.push(`Size: ${n.size.width}x${n.size.height}`);
-      }
-      parts.push("", n.body);
-      return parts.join("\n");
-    });
+    } else {
+      text += `\n\n## Network Notes\n\nNo network notes available.`;
+    }
 
     return {
-      content: [
-        {
-          type: "text" as const,
-          text: `${active.length} active note(s):\n\n${lines.join("\n\n---\n\n")}`,
-        },
-      ],
+      content: [{ type: "text" as const, text }],
     };
   },
 );
@@ -169,6 +263,19 @@ server.tool(
     const notes = readNotes();
     const note = notes.find((n) => n.id === id);
     if (!note) {
+      // Check remote notes before giving up
+      const remoteNotes = readRemoteNotes();
+      const remoteNote = remoteNotes.find((n) => n.id === id);
+      if (remoteNote) {
+        let text = "";
+        if (remoteNote.title) text += `# ${remoteNote.title}\n\n`;
+        text += remoteNote.body;
+        text += `\n\n---\nFrom: ${remoteNote.sender} | Intent: ${remoteNote.intent} | Scope: ${remoteNote.scope}`;
+        text += `\nReceived: ${formatAge(remoteNote.timestamp)} | TTL: ${remoteNote.ttl === 0 ? "session" : remoteNote.ttl + "s"}`;
+        text += `\nID: ${remoteNote.id}`;
+        return { content: [{ type: "text" as const, text }] };
+      }
+
       return {
         content: [{ type: "text" as const, text: `Note ${id} not found.` }],
       };
@@ -349,6 +456,7 @@ server.tool(
       }
 
       writeNotes(remaining);
+      writeSignalFile(`.retract-${id}`);
       return {
         content: [
           { type: "text" as const, text: `Dismissed note ${id}.` },
@@ -356,11 +464,128 @@ server.tool(
       };
     }
 
-    // Clear all
+    // Clear all — retract each note from the network before clearing
+    const notes = readNotes();
+    for (const note of notes) {
+      writeSignalFile(`.retract-${note.id}`);
+    }
     writeNotes([]);
     return {
       content: [
         { type: "text" as const, text: "All notes cleared." },
+      ],
+    };
+  },
+);
+
+// ---- Tool 9: peer_discover ----
+
+server.tool(
+  "peer_discover",
+  "Find active Scratch Pad instances on the local network. Returns discovered peers.",
+  {},
+  async () => {
+    const peers = readPeers();
+    if (peers.length === 0) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: "No peers discovered on the network. Make sure other Scratch Pad instances are running on the same LAN.",
+          },
+        ],
+      };
+    }
+    let text = `## Discovered Peers (${peers.length})\n\n`;
+    for (const peer of peers) {
+      text += `- **${peer.name}** (${peer.addr})\n`;
+      text += `  Connected: ${peer.connectedAt} | Last seen: ${peer.lastSeen}\n`;
+    }
+    return { content: [{ type: "text" as const, text }] };
+  },
+);
+
+// ---- Tool 10: peer_list ----
+
+server.tool(
+  "peer_list",
+  "List currently connected peers with their status and shared note counts.",
+  {},
+  async () => {
+    const peers = readPeers();
+    const remoteNotes = readRemoteNotes();
+
+    if (peers.length === 0) {
+      return {
+        content: [
+          { type: "text" as const, text: "No peers currently connected." },
+        ],
+      };
+    }
+
+    let text = `## Connected Peers (${peers.length})\n\n`;
+    for (const peer of peers) {
+      const noteCount = remoteNotes.filter(
+        (n) => n.senderId === peer.nodeId,
+      ).length;
+      text += `- **${peer.name}** — ${noteCount} shared note${noteCount !== 1 ? "s" : ""}\n`;
+      text += `  Last seen: ${peer.lastSeen}\n`;
+    }
+    return { content: [{ type: "text" as const, text }] };
+  },
+);
+
+// ---- Tool 11: pad_subscribe ----
+
+server.tool(
+  "pad_subscribe",
+  "Subscribe to notes from a specific scope. Controls which network notes you receive.",
+  {
+    scope: z
+      .string()
+      .optional()
+      .describe(
+        "Scope to subscribe to: 'team' or a named group (e.g., 'frontend', 'backend'). Omit to subscribe to all.",
+      ),
+  },
+  async ({ scope }) => {
+    const subsFile = path.join(notesDir(), "subscriptions.json");
+    let subs: string[] = [];
+    if (fs.existsSync(subsFile)) {
+      try {
+        subs = JSON.parse(fs.readFileSync(subsFile, "utf-8"));
+      } catch {
+        subs = [];
+      }
+    }
+
+    if (scope) {
+      if (!subs.includes(scope)) {
+        subs.push(scope);
+      }
+      fs.writeFileSync(
+        subsFile,
+        JSON.stringify(subs, null, 2) + "\n",
+        "utf-8",
+      );
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Subscribed to scope: "${scope}". Current subscriptions: ${subs.join(", ")}`,
+          },
+        ],
+      };
+    }
+
+    // No scope = subscribe to all (delete subs file)
+    if (fs.existsSync(subsFile)) fs.unlinkSync(subsFile);
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: "Subscribed to all scopes (no filtering).",
+        },
       ],
     };
   },

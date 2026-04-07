@@ -28,6 +28,9 @@ notify = { version = "6", features = ["macos_fsevent"] }
 dirs = "5"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
+mdns-sd = "0.11"
+tokio = { version = "1", features = ["net", "io-util", "sync", "macros", "time", "rt"] }
+hostname = "0.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-foundation = { version = "0.3", features = ["NSNotification", "NSOperation"] }

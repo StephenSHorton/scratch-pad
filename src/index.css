@@ -216,3 +216,27 @@
 .md-body em {
 	font-style: italic;
 }
+
+/* ---------------------------------------------------------------------------
+   Remote note badges
+   --------------------------------------------------------------------------- */
+
+.remote-sender-badge {
+	font-size: 10px;
+	opacity: 0.5;
+	font-weight: 500;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 120px;
+}
+
+.remote-intent-badge {
+	font-size: 9px;
+	padding: 1px 6px;
+	border-radius: 3px;
+	color: white;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+}
