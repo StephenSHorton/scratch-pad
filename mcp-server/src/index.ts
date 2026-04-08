@@ -654,7 +654,9 @@ server.tool(
 // Note highlight / emphasis
 // ---------------------------------------------------------------------------
 
-function readHighlights(): Record<string, string> {
+type HighlightValue = string | { type: "blocks"; blocks: number[] };
+
+function readHighlights(): Record<string, HighlightValue> {
 	const file = path.join(notesDir(), "highlights.json");
 	if (!fs.existsSync(file)) return {};
 	try {
@@ -664,7 +666,7 @@ function readHighlights(): Record<string, string> {
 	}
 }
 
-function writeHighlights(highlights: Record<string, string>): void {
+function writeHighlights(highlights: Record<string, HighlightValue>): void {
 	const file = path.join(notesDir(), "highlights.json");
 	fs.writeFileSync(file, JSON.stringify(highlights, null, 2) + "\n", "utf-8");
 }
@@ -712,6 +714,385 @@ server.tool(
 			],
 		};
 	},
+);
+
+// ---------------------------------------------------------------------------
+// Block-level tools
+// ---------------------------------------------------------------------------
+
+interface Block {
+  index: number;
+  type: "heading" | "paragraph" | "list" | "code" | "blank";
+  text: string;
+  raw: string;
+}
+
+function parseBlocks(body: string): Block[] {
+  const lines = body.split("\n");
+  const blocks: Block[] = [];
+  let i = 0;
+  let index = 0;
+
+  const isHeading = (line: string) => /^#{1,6}\s+/.test(line);
+  const isListItem = (line: string) =>
+    /^\s*([-*+]\s+|\d+\.\s+)/.test(line);
+  const isFence = (line: string) => /^\s*```/.test(line);
+  const isBlank = (line: string) => line.trim() === "";
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Blank line
+    if (isBlank(line)) {
+      blocks.push({
+        index: index++,
+        type: "blank",
+        text: "",
+        raw: line,
+      });
+      i++;
+      continue;
+    }
+
+    // Fenced code block
+    if (isFence(line)) {
+      const start = i;
+      const collected: string[] = [line];
+      i++;
+      while (i < lines.length && !isFence(lines[i])) {
+        collected.push(lines[i]);
+        i++;
+      }
+      // Include the closing fence if present
+      if (i < lines.length && isFence(lines[i])) {
+        collected.push(lines[i]);
+        i++;
+      }
+      const raw = collected.join("\n");
+      // Strip the fence lines for the text
+      const text = collected
+        .slice(1, collected[collected.length - 1] && isFence(collected[collected.length - 1]) ? -1 : undefined)
+        .join("\n");
+      blocks.push({
+        index: index++,
+        type: "code",
+        text,
+        raw,
+      });
+      continue;
+    }
+
+    // Heading
+    if (isHeading(line)) {
+      const text = line.replace(/^#{1,6}\s+/, "");
+      blocks.push({
+        index: index++,
+        type: "heading",
+        text,
+        raw: line,
+      });
+      i++;
+      continue;
+    }
+
+    // List — consecutive list items form one block
+    if (isListItem(line)) {
+      const collected: string[] = [];
+      while (i < lines.length && isListItem(lines[i])) {
+        collected.push(lines[i]);
+        i++;
+      }
+      const raw = collected.join("\n");
+      const text = collected
+        .map((l) => l.replace(/^\s*([-*+]\s+|\d+\.\s+)/, ""))
+        .join("\n");
+      blocks.push({
+        index: index++,
+        type: "list",
+        text,
+        raw,
+      });
+      continue;
+    }
+
+    // Paragraph — consecutive non-blank, non-list, non-heading, non-fence lines
+    const collected: string[] = [];
+    while (
+      i < lines.length &&
+      !isBlank(lines[i]) &&
+      !isHeading(lines[i]) &&
+      !isListItem(lines[i]) &&
+      !isFence(lines[i])
+    ) {
+      collected.push(lines[i]);
+      i++;
+    }
+    const raw = collected.join("\n");
+    blocks.push({
+      index: index++,
+      type: "paragraph",
+      text: raw,
+      raw,
+    });
+  }
+
+  return blocks;
+}
+
+function blocksToMarkdown(blocks: Block[]): string {
+  return blocks.map((b) => b.raw).join("\n");
+}
+
+server.tool(
+  "block_list",
+  "List all blocks in a scratch pad with their index, type, and content. Use this to find blocks before targeting them with block_highlight, block_update, etc.",
+  {
+    id: z.string().describe("Note ID"),
+  },
+  async ({ id }) => {
+    log(`block_list: ${id}`);
+    const notes = readNotes();
+    const note = notes.find((n) => n.id === id);
+    if (!note) {
+      return {
+        content: [{ type: "text" as const, text: `Note ${id} not found.` }],
+      };
+    }
+
+    const blocks = parseBlocks(note.body);
+    if (blocks.length === 0) {
+      return {
+        content: [
+          { type: "text" as const, text: `Note ${id} has no blocks (empty body).` },
+        ],
+      };
+    }
+
+    const lines = blocks.map((b) => {
+      const preview = b.raw.replace(/\n/g, "\\n");
+      return `${b.index} [${b.type}] ${preview}`;
+    });
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `${blocks.length} block(s) in note ${id}:\n\n${lines.join("\n")}`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
+  "block_highlight",
+  "Highlight specific blocks in a scratch pad by index and dim everything else. More precise than note_highlight (which uses pattern matching). Use block_list first to see available blocks.",
+  {
+    id: z.string().describe("Note ID"),
+    blocks: z
+      .array(z.number())
+      .describe("Array of block indices to highlight (e.g., [0, 1, 2])"),
+  },
+  async ({ id, blocks }) => {
+    log(`block_highlight: ${id} blocks=[${blocks.join(",")}]`);
+    const notes = readNotes();
+    const note = notes.find((n) => n.id === id);
+    if (!note) {
+      return {
+        content: [{ type: "text" as const, text: `Note ${id} not found.` }],
+      };
+    }
+
+    const highlights = readHighlights();
+    highlights[id] = { type: "blocks", blocks };
+    writeHighlights(highlights);
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `Highlighting blocks [${blocks.join(", ")}] in note ${id}. User can click the note to clear.`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
+  "block_insert",
+  "Insert a new block into a scratch pad after the specified index (use -1 to insert at the beginning).",
+  {
+    id: z.string().describe("Note ID"),
+    after_index: z
+      .number()
+      .describe("Insert after this block index (-1 for beginning)"),
+    content: z
+      .string()
+      .describe(
+        "Markdown content for the new block (e.g., '## My Heading' or '- list item' or 'plain paragraph')",
+      ),
+  },
+  async ({ id, after_index, content }) => {
+    log(`block_insert: ${id} after=${after_index}`);
+    const notes = readNotes();
+    const note = notes.find((n) => n.id === id);
+    if (!note) {
+      return {
+        content: [{ type: "text" as const, text: `Note ${id} not found.` }],
+      };
+    }
+
+    const blocks = parseBlocks(note.body);
+    const newBlocks = parseBlocks(content);
+
+    if (newBlocks.length === 0) {
+      return {
+        content: [
+          { type: "text" as const, text: `Cannot insert empty content.` },
+        ],
+      };
+    }
+
+    let insertAt: number;
+    if (after_index < 0) {
+      insertAt = 0;
+    } else if (after_index >= blocks.length) {
+      insertAt = blocks.length;
+    } else {
+      insertAt = after_index + 1;
+    }
+
+    // Insert a blank separator before the new block(s) if not at the start
+    // and the block immediately before is not already blank.
+    const toInsert: Block[] = [];
+    if (insertAt > 0 && blocks[insertAt - 1] && blocks[insertAt - 1].type !== "blank") {
+      toInsert.push({ index: 0, type: "blank", text: "", raw: "" });
+    }
+    toInsert.push(...newBlocks);
+    // Add a trailing blank separator if next block is not blank
+    if (insertAt < blocks.length && blocks[insertAt].type !== "blank") {
+      toInsert.push({ index: 0, type: "blank", text: "", raw: "" });
+    }
+
+    blocks.splice(insertAt, 0, ...toInsert);
+
+    // Reindex
+    blocks.forEach((b, idx) => {
+      b.index = idx;
+    });
+
+    note.body = blocksToMarkdown(blocks);
+    writeNotes(notes);
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `Inserted block(s) into note ${id} after index ${after_index}.`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
+  "block_update",
+  "Replace the content of a specific block by index.",
+  {
+    id: z.string().describe("Note ID"),
+    block_index: z.number().describe("Block index to replace"),
+    content: z.string().describe("New markdown content for the block"),
+  },
+  async ({ id, block_index, content }) => {
+    log(`block_update: ${id} block=${block_index}`);
+    const notes = readNotes();
+    const note = notes.find((n) => n.id === id);
+    if (!note) {
+      return {
+        content: [{ type: "text" as const, text: `Note ${id} not found.` }],
+      };
+    }
+
+    const blocks = parseBlocks(note.body);
+    if (block_index < 0 || block_index >= blocks.length) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Block index ${block_index} out of range (note has ${blocks.length} block(s)).`,
+          },
+        ],
+      };
+    }
+
+    const replacementBlocks = parseBlocks(content);
+    blocks.splice(block_index, 1, ...replacementBlocks);
+
+    blocks.forEach((b, idx) => {
+      b.index = idx;
+    });
+
+    note.body = blocksToMarkdown(blocks);
+    writeNotes(notes);
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `Updated block ${block_index} in note ${id}.`,
+        },
+      ],
+    };
+  },
+);
+
+server.tool(
+  "block_delete",
+  "Delete a specific block from a scratch pad by index.",
+  {
+    id: z.string().describe("Note ID"),
+    block_index: z.number().describe("Block index to delete"),
+  },
+  async ({ id, block_index }) => {
+    log(`block_delete: ${id} block=${block_index}`);
+    const notes = readNotes();
+    const note = notes.find((n) => n.id === id);
+    if (!note) {
+      return {
+        content: [{ type: "text" as const, text: `Note ${id} not found.` }],
+      };
+    }
+
+    const blocks = parseBlocks(note.body);
+    if (block_index < 0 || block_index >= blocks.length) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Block index ${block_index} out of range (note has ${blocks.length} block(s)).`,
+          },
+        ],
+      };
+    }
+
+    blocks.splice(block_index, 1);
+
+    blocks.forEach((b, idx) => {
+      b.index = idx;
+    });
+
+    note.body = blocksToMarkdown(blocks);
+    writeNotes(notes);
+
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `Deleted block ${block_index} from note ${id}.`,
+        },
+      ],
+    };
+  },
 );
 
 // ---------------------------------------------------------------------------

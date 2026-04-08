@@ -218,6 +218,199 @@
 }
 
 /* ---------------------------------------------------------------------------
+   Lexical editor — block-level styling for sticky notes
+   --------------------------------------------------------------------------- */
+
+.lexical-note-container {
+	/* container for the editor; positioning anchors absolute children */
+}
+
+.lexical-content-editable {
+	outline: none;
+	min-height: 100%;
+	caret-color: currentColor;
+}
+
+/* Title block — matches Lexical block styling so the title feels like
+   the first block in the document. */
+.note-title-block {
+	padding: 3px 12px;
+	margin-left: -4px;
+	margin-right: 50px;
+	border-radius: 6px;
+	transition: background-color 0.12s ease;
+}
+
+.note-title-block:hover {
+	background-color: rgba(0, 0, 0, 0.06);
+}
+
+/* Top-level block hover affordance — Notion/Linear style.
+   Each top-level child of the editor gets subtle padding, rounded corners,
+   and a hover tint. Uses a small negative margin so the hover background
+   extends slightly beyond the text but stays inset from the pad edge,
+   keeping the rounded corners visible. */
+.lexical-content-editable > .lexical-paragraph,
+.lexical-content-editable > .lexical-quote,
+.lexical-content-editable > .lexical-heading-h1,
+.lexical-content-editable > .lexical-heading-h2,
+.lexical-content-editable > .lexical-heading-h3,
+.lexical-content-editable > .lexical-heading-h4,
+.lexical-content-editable > .lexical-heading-h5,
+.lexical-content-editable > .lexical-heading-h6,
+.lexical-content-editable > .lexical-list-ul,
+.lexical-content-editable > .lexical-list-ol,
+.lexical-content-editable > .lexical-code {
+	padding: 4px 12px;
+	margin-left: -4px;
+	margin-right: -4px;
+	margin-bottom: 4px;
+	border-radius: 6px;
+	transition: background-color 0.12s ease;
+}
+
+/* Lists need extra left padding so bullet/number markers render inside the block */
+.lexical-content-editable > .lexical-list-ul,
+.lexical-content-editable > .lexical-list-ol {
+	padding-left: 30px;
+}
+
+.lexical-content-editable > .lexical-paragraph:hover,
+.lexical-content-editable > .lexical-quote:hover,
+.lexical-content-editable > .lexical-heading-h1:hover,
+.lexical-content-editable > .lexical-heading-h2:hover,
+.lexical-content-editable > .lexical-heading-h3:hover,
+.lexical-content-editable > .lexical-heading-h4:hover,
+.lexical-content-editable > .lexical-heading-h5:hover,
+.lexical-content-editable > .lexical-heading-h6:hover,
+.lexical-content-editable > .lexical-list-ul:hover,
+.lexical-content-editable > .lexical-list-ol:hover,
+.lexical-content-editable > .lexical-code:hover {
+	background-color: rgba(0, 0, 0, 0.06);
+}
+
+.lexical-paragraph {
+	margin: 0 0 2px 0;
+}
+
+.lexical-quote {
+	margin: 4px 0 4px 0;
+	padding-left: 10px;
+	border-left: 3px solid rgba(0, 0, 0, 0.18);
+	font-style: italic;
+	opacity: 0.85;
+}
+
+.lexical-heading-h1 {
+	font-size: 16px;
+	font-weight: 700;
+	margin: 0 0 4px 0;
+	line-height: 1.3;
+}
+
+.lexical-heading-h2 {
+	font-size: 14.5px;
+	font-weight: 600;
+	margin: 0 0 3px 0;
+	line-height: 1.3;
+}
+
+.lexical-heading-h3 {
+	font-size: 13.5px;
+	font-weight: 600;
+	margin: 0 0 2px 0;
+	line-height: 1.3;
+}
+
+.lexical-heading-h4,
+.lexical-heading-h5,
+.lexical-heading-h6 {
+	font-size: 13px;
+	font-weight: 600;
+	margin: 0 0 2px 0;
+	line-height: 1.3;
+}
+
+.lexical-list-ul {
+	margin: 2px 0 4px 0;
+	padding-left: 18px;
+	list-style-type: disc;
+}
+
+.lexical-list-ol {
+	margin: 2px 0 4px 0;
+	padding-left: 18px;
+	list-style-type: decimal;
+}
+
+.lexical-list-item {
+	margin-bottom: 1px;
+}
+
+.lexical-nested-list-item {
+	list-style-type: none;
+}
+
+.lexical-link {
+	color: inherit;
+	text-decoration: underline;
+	text-decoration-color: rgba(0, 0, 0, 0.3);
+}
+
+.lexical-text-bold {
+	font-weight: 600;
+}
+
+.lexical-text-italic {
+	font-style: italic;
+}
+
+.lexical-text-underline {
+	text-decoration: underline;
+}
+
+.lexical-text-strikethrough {
+	text-decoration: line-through;
+}
+
+.lexical-text-code {
+	background: rgba(0, 0, 0, 0.06);
+	border-radius: 3px;
+	padding: 1px 4px;
+	font-family: "SF Mono", "Menlo", "Consolas", monospace;
+	font-size: 11.5px;
+}
+
+.lexical-code {
+	display: block;
+	background: rgba(0, 0, 0, 0.07);
+	border-radius: 4px;
+	padding: 6px 8px;
+	margin: 4px 0;
+	font-family: "SF Mono", "Menlo", "Consolas", monospace;
+	font-size: 11.5px;
+	line-height: 1.45;
+	overflow-x: auto;
+	white-space: pre;
+	tab-size: 2;
+}
+
+/* Highlight decoration applied via JS to top-level block DOM nodes */
+.lexical-block-match {
+	background: rgba(255, 235, 59, 0.3);
+	border-radius: 3px;
+	padding: 1px 4px;
+	margin: 0 -4px;
+	transition: opacity 0.3s;
+	opacity: 1;
+}
+
+.lexical-block-dim {
+	opacity: 0.18;
+	transition: opacity 0.3s;
+}
+
+/* ---------------------------------------------------------------------------
    Remote note badges
    --------------------------------------------------------------------------- */
 
