@@ -114,6 +114,14 @@ function formatAge(timestampMs: number): string {
   return `${Math.floor(seconds / 86400)}d ago`;
 }
 
+function log(msg: string): void {
+	const timestamp = new Date().toISOString().replace("T", " ").replace("Z", "");
+	const line = `[${timestamp}] [mcp] ${msg}\n`;
+	try {
+		fs.appendFileSync(path.join(notesDir(), "scratch-pad.log"), line);
+	} catch {}
+}
+
 // ---------------------------------------------------------------------------
 // MCP Server
 // ---------------------------------------------------------------------------
@@ -153,6 +161,7 @@ server.tool(
       .describe("Note intent when sharing (default: fyi)"),
   },
   async ({ body, title, color, ttl, scope, intent }) => {
+    log(`note_create: "${title || "(untitled)"}" [${color}] scope=${scope}`);
     const now = new Date();
     const note: Note = {
       id: crypto.randomUUID(),
@@ -194,6 +203,7 @@ server.tool(
   "List all active scratch pad notes (local and network) with their full content",
   {},
   async () => {
+    log("note_list");
     const notes = readNotes();
     const now = Date.now();
 
@@ -260,6 +270,7 @@ server.tool(
     id: z.string().describe("The ID of the note to read"),
   },
   async ({ id }) => {
+    log(`note_read: ${id}`);
     const notes = readNotes();
     const note = notes.find((n) => n.id === id);
     if (!note) {
@@ -309,6 +320,7 @@ server.tool(
       .describe("New color"),
   },
   async ({ id, body, title, color }) => {
+    log(`note_update: ${id}`);
     const notes = readNotes();
     const note = notes.find((n) => n.id === id);
     if (!note) {
@@ -344,6 +356,7 @@ server.tool(
     y: z.number().describe("Y position in screen pixels"),
   },
   async ({ id, x, y }) => {
+    log(`note_move: ${id} to (${x}, ${y})`);
     const notes = readNotes();
     const note = notes.find((n) => n.id === id);
     if (!note) {
@@ -376,6 +389,7 @@ server.tool(
     height: z.number().describe("Height in pixels"),
   },
   async ({ id, width, height }) => {
+    log(`note_resize: ${id} to ${width}x${height}`);
     const notes = readNotes();
     const note = notes.find((n) => n.id === id);
     if (!note) {
@@ -404,6 +418,7 @@ server.tool(
   "Arrange all scratch pad notes in an optimal grid layout filling the screen. The app handles the actual layout using real screen dimensions.",
   {},
   async () => {
+    log("note_organize");
     const notes = readNotes();
     const active = notes.filter(
       (n) => !n.expiresAt || new Date(n.expiresAt).getTime() > Date.now(),
@@ -442,6 +457,7 @@ server.tool(
       .describe("ID of a specific note to dismiss. Omit to clear ALL notes."),
   },
   async ({ id }) => {
+    log(`note_clear: ${id || "all"}`);
     if (id) {
       const notes = readNotes();
       const before = notes.length;
@@ -485,6 +501,7 @@ server.tool(
   "Find active Scratch Pad instances on the local network. Returns discovered peers.",
   {},
   async () => {
+    log("peer_discover");
     const peers = readPeers();
     if (peers.length === 0) {
       return {
@@ -512,6 +529,7 @@ server.tool(
   "List currently connected peers with their status and shared note counts.",
   {},
   async () => {
+    log("peer_list");
     const peers = readPeers();
     const remoteNotes = readRemoteNotes();
 
@@ -549,6 +567,7 @@ server.tool(
       ),
   },
   async ({ scope }) => {
+    log(`pad_subscribe: ${scope || "all"}`);
     const subsFile = path.join(notesDir(), "subscriptions.json");
     let subs: string[] = [];
     if (fs.existsSync(subsFile)) {
@@ -589,6 +608,228 @@ server.tool(
       ],
     };
   },
+);
+
+// ---------------------------------------------------------------------------
+// Log viewer controls
+// ---------------------------------------------------------------------------
+
+server.tool(
+	"log_open",
+	"Open the live log viewer as a floating sticky note. Optionally pass a filter to only show matching entries.",
+	{
+		filter: z
+			.string()
+			.optional()
+			.describe("Only show log lines containing this text (e.g., 'network', 'mcp', 'error')"),
+	},
+	async ({ filter }) => {
+		log(`log_open: ${filter || "unfiltered"}`);
+		writeSignalFile(".show-logs", filter ? { filter } : undefined);
+		return {
+			content: [
+				{
+					type: "text" as const,
+					text: `Log viewer opened${filter ? ` with filter: "${filter}"` : ""}.`,
+				},
+			],
+		};
+	},
+);
+
+server.tool(
+	"log_close",
+	"Close the live log viewer window.",
+	{},
+	async () => {
+		log("log_close");
+		writeSignalFile(".close-logs");
+		return {
+			content: [{ type: "text" as const, text: "Log viewer closed." }],
+		};
+	},
+);
+
+// ---------------------------------------------------------------------------
+// Note highlight / emphasis
+// ---------------------------------------------------------------------------
+
+function readHighlights(): Record<string, string> {
+	const file = path.join(notesDir(), "highlights.json");
+	if (!fs.existsSync(file)) return {};
+	try {
+		return JSON.parse(fs.readFileSync(file, "utf-8"));
+	} catch {
+		return {};
+	}
+}
+
+function writeHighlights(highlights: Record<string, string>): void {
+	const file = path.join(notesDir(), "highlights.json");
+	fs.writeFileSync(file, JSON.stringify(highlights, null, 2) + "\n", "utf-8");
+}
+
+server.tool(
+	"note_highlight",
+	"Highlight matching content in a scratch pad and dim everything else. Draws the user's attention to specific information. The user can click the note to clear the highlight.",
+	{
+		id: z.string().describe("Note ID to highlight"),
+		pattern: z.string().describe("Text pattern to highlight — matching lines stay bright, others are dimmed"),
+	},
+	async ({ id, pattern }) => {
+		log(`note_highlight: ${id} pattern="${pattern}"`);
+		const highlights = readHighlights();
+		highlights[id] = pattern;
+		writeHighlights(highlights);
+		return {
+			content: [
+				{
+					type: "text" as const,
+					text: `Highlighting "${pattern}" in note ${id}. User can click the note to clear.`,
+				},
+			],
+		};
+	},
+);
+
+server.tool(
+	"note_unhighlight",
+	"Remove highlight/emphasis from a scratch pad, restoring normal display.",
+	{
+		id: z.string().describe("Note ID to unhighlight"),
+	},
+	async ({ id }) => {
+		log(`note_unhighlight: ${id}`);
+		const highlights = readHighlights();
+		delete highlights[id];
+		writeHighlights(highlights);
+		return {
+			content: [
+				{
+					type: "text" as const,
+					text: `Highlight removed from note ${id}.`,
+				},
+			],
+		};
+	},
+);
+
+// ---------------------------------------------------------------------------
+// Log tools
+// ---------------------------------------------------------------------------
+
+function readLogFile(): string {
+	const file = path.join(notesDir(), "scratch-pad.log");
+	if (!fs.existsSync(file)) return "";
+	try {
+		return fs.readFileSync(file, "utf-8");
+	} catch {
+		return "";
+	}
+}
+
+server.tool(
+	"log_tail",
+	"Read the most recent log entries from Scratch Pad. Useful for debugging network, MCP, and app events.",
+	{
+		lines: z
+			.number()
+			.optional()
+			.describe("Number of lines to return (default 50, max 500)"),
+		filter: z
+			.string()
+			.optional()
+			.describe(
+				"Optional filter — only return lines containing this string (e.g., 'network', 'mcp', 'error')",
+			),
+	},
+	async ({ lines, filter }) => {
+		const maxLines = Math.min(lines ?? 50, 500);
+		const content = readLogFile();
+		let allLines = content.split("\n").filter((l) => l.trim());
+
+		if (filter) {
+			const lowerFilter = filter.toLowerCase();
+			allLines = allLines.filter((l) => l.toLowerCase().includes(lowerFilter));
+		}
+
+		const start = Math.max(0, allLines.length - maxLines);
+		const result = allLines.slice(start).join("\n");
+
+		return {
+			content: [
+				{
+					type: "text" as const,
+					text: result || "No log entries found.",
+				},
+			],
+		};
+	},
+);
+
+server.tool(
+	"log_search",
+	"Search Scratch Pad logs by keyword, time range, or category. Returns matching entries with context.",
+	{
+		query: z.string().describe("Search term to find in log entries"),
+		category: z
+			.enum(["mcp", "network", "all"])
+			.optional()
+			.describe("Filter by log category (default: all)"),
+		last_minutes: z
+			.number()
+			.optional()
+			.describe(
+				"Only search entries from the last N minutes (default: no time limit)",
+			),
+	},
+	async ({ query, category, last_minutes }) => {
+		const content = readLogFile();
+		let allLines = content.split("\n").filter((l) => l.trim());
+
+		// Filter by category
+		if (category && category !== "all") {
+			allLines = allLines.filter((l) => l.includes(`[${category}]`));
+		}
+
+		// Filter by time range
+		if (last_minutes) {
+			const cutoff = Date.now() - last_minutes * 60 * 1000;
+			allLines = allLines.filter((l) => {
+				const match = l.match(/^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\]/);
+				if (!match) return false;
+				const ts = new Date(match[1].replace(" ", "T") + "Z").getTime();
+				return ts >= cutoff;
+			});
+		}
+
+		// Search
+		const lowerQuery = query.toLowerCase();
+		const matches = allLines.filter((l) => l.toLowerCase().includes(lowerQuery));
+
+		if (matches.length === 0) {
+			return {
+				content: [
+					{
+						type: "text" as const,
+						text: `No log entries matching "${query}"${category ? ` in [${category}]` : ""}${last_minutes ? ` from last ${last_minutes}m` : ""}.`,
+					},
+				],
+			};
+		}
+
+		// Cap output
+		const capped = matches.slice(-200);
+		let text = `## Log Search: "${query}" (${matches.length} matches)\n\n`;
+		text += capped.join("\n");
+		if (matches.length > 200) {
+			text += `\n\n... (showing last 200 of ${matches.length} matches)`;
+		}
+
+		return {
+			content: [{ type: "text" as const, text }],
+		};
+	},
 );
 
 // ---------------------------------------------------------------------------

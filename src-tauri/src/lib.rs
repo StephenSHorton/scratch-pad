@@ -77,7 +77,7 @@ fn log_file() -> PathBuf {
     notes_dir().join("scratch-pad.log")
 }
 
-fn log(msg: &str) {
+pub(crate) fn log(msg: &str) {
     use std::io::Write;
     let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S%.3f");
     let line = format!("[{timestamp}] {msg}\n");
@@ -216,6 +216,43 @@ fn update_note_position(id: String, x: f64, y: f64, state: tauri::State<'_, Note
             note.position = Some(Position { x, y });
         }
         write_notes(&notes);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Highlight commands
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn clear_note_highlight(id: String) -> Result<(), String> {
+    let path = notes_dir().join("highlights.json");
+    if !path.exists() {
+        return Ok(());
+    }
+    let content = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let mut highlights: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(&content).unwrap_or_default();
+    highlights.remove(&id);
+    let json = serde_json::to_string_pretty(&highlights).map_err(|e| e.to_string())?;
+    fs::write(&path, json).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Log viewer command
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn read_log_tail(lines: Option<usize>) -> String {
+    let max_lines = lines.unwrap_or(200);
+    let path = log_file();
+    match fs::read_to_string(&path) {
+        Ok(content) => {
+            let all_lines: Vec<&str> = content.lines().collect();
+            let start = all_lines.len().saturating_sub(max_lines);
+            all_lines[start..].join("\n")
+        }
+        Err(_) => String::from("No log file found."),
     }
 }
 
@@ -609,6 +646,8 @@ pub fn run() {
             update_note_body,
             update_note_color,
             update_note_position,
+            read_log_tail,
+            clear_note_highlight,
             get_peers,
             get_remote_notes,
             get_remote_note,
@@ -697,9 +736,22 @@ pub fn run() {
                         tauri::async_runtime::spawn(check_for_updates(h, false));
                     }
                     "show_logs" => {
-                        let path = log_file();
-                        if path.exists() {
-                            std::process::Command::new("open").arg(path).spawn().ok();
+                        // Create or focus the log viewer window
+                        if let Some(window) = handle.get_webview_window("logs") {
+                            window.set_focus().ok();
+                        } else {
+                            let always_on_top = handle
+                                .try_state::<SettingsState>()
+                                .and_then(|s| s.settings.lock().ok().map(|s| s.always_on_top))
+                                .unwrap_or(false);
+                            WebviewWindowBuilder::new(&handle, "logs", WebviewUrl::default())
+                                .title("Scratch Pad Logs")
+                                .decorations(false)
+                                .transparent(true)
+                                .always_on_top(always_on_top)
+                                .inner_size(520.0, 400.0)
+                                .build()
+                                .ok();
                         }
                     }
                     "always_on_top" => {
@@ -809,6 +861,73 @@ pub fn run() {
                                         sync_windows(&handle, &state);
                                         organize_windows(&handle, &state);
                                         return;
+                                    }
+
+                                    // Check for show-logs signal from MCP
+                                    let show_logs_signal = notes_dir().join(".show-logs");
+                                    if show_logs_signal.exists() {
+                                        let signal_data = fs::read_to_string(&show_logs_signal).unwrap_or_default();
+                                        fs::remove_file(&show_logs_signal).ok();
+                                        // Parse optional filter from signal payload
+                                        let filter: Option<String> = serde_json::from_str::<serde_json::Value>(&signal_data)
+                                            .ok()
+                                            .and_then(|v| v.get("filter").and_then(|f| f.as_str().map(String::from)));
+
+                                        if let Some(window) = handle.get_webview_window("logs") {
+                                            window.set_focus().ok();
+                                            if let Some(f) = filter {
+                                                window.emit("log-filter", f).ok();
+                                            }
+                                        } else {
+                                            let always_on_top = handle
+                                                .try_state::<SettingsState>()
+                                                .and_then(|s| s.settings.lock().ok().map(|s| s.always_on_top))
+                                                .unwrap_or(false);
+                                            if let Ok(window) = WebviewWindowBuilder::new(&handle, "logs", WebviewUrl::default())
+                                                .title("Scratch Pad Logs")
+                                                .decorations(false)
+                                                .transparent(true)
+                                                .always_on_top(always_on_top)
+                                                .inner_size(520.0, 400.0)
+                                                .build()
+                                            {
+                                                if let Some(f) = filter {
+                                                    // Wait briefly for the window to mount, then send filter
+                                                    let w = window.clone();
+                                                    std::thread::spawn(move || {
+                                                        std::thread::sleep(Duration::from_millis(800));
+                                                        w.emit("log-filter", f).ok();
+                                                    });
+                                                }
+                                            }
+                                        }
+                                        return;
+                                    }
+
+                                    // Check for close-logs signal from MCP
+                                    let close_logs_signal = notes_dir().join(".close-logs");
+                                    if close_logs_signal.exists() {
+                                        fs::remove_file(&close_logs_signal).ok();
+                                        if let Some(window) = handle.get_webview_window("logs") {
+                                            window.close().ok();
+                                        }
+                                        return;
+                                    }
+
+                                    // Check for highlights.json changes — emit to all note windows
+                                    let highlights_file = notes_dir().join("highlights.json");
+                                    if highlights_file.exists() {
+                                        if let Ok(content) = fs::read_to_string(&highlights_file) {
+                                            if let Ok(highlights) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&content) {
+                                                for (note_id, pattern) in highlights.iter() {
+                                                    if let Some(p) = pattern.as_str() {
+                                                        if let Some(window) = handle.get_webview_window(note_id) {
+                                                            window.emit("note-highlight", p.to_string()).ok();
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
 
                                     // Check for share signal files (.share-{noteId})

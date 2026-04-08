@@ -49,10 +49,10 @@ pub async fn start_network(_app: AppHandle) -> NetworkHandle {
 	let node_id = uuid::Uuid::new_v4().to_string();
 	let display_name = discovery::resolve_display_name();
 
-	eprintln!(
+	crate::log(&format!(
 		"[network] Starting P2P network — node_id={}, name={}",
 		node_id, display_name
-	);
+	));
 
 	let store = Arc::new(RemoteNoteStore::new());
 	let shutdown = Arc::new(Notify::new());
@@ -112,7 +112,7 @@ pub async fn start_network(_app: AppHandle) -> NetworkHandle {
 			std::mem::forget(_daemon);
 		}
 		Err(e) => {
-			eprintln!("[network] mDNS discovery failed (networking will be limited): {e}");
+			crate::log(&format!("[network] mDNS discovery failed (networking will be limited): {e}"));
 		}
 	}
 
@@ -134,7 +134,7 @@ pub async fn start_network(_app: AppHandle) -> NetworkHandle {
 		}
 	});
 
-	eprintln!("[network] P2P network started on TCP port {tcp_port}");
+	crate::log(&format!("[network] P2P network started on TCP port {tcp_port}"));
 
 	NetworkHandle {
 		store,

@@ -140,7 +140,7 @@ pub async fn start_transport(
 		.map_err(|e| format!("Failed to get local addr: {e}"))?
 		.port();
 
-	eprintln!("[network/transport] TCP listener bound on port {port}");
+	crate::log(&format!("[network] TCP listener bound on port {port}"));
 
 	let (share_tx, share_rx) = mpsc::unbounded_channel::<NoteEnvelope>();
 	let (retract_tx, retract_rx) = mpsc::unbounded_channel::<String>();
@@ -192,7 +192,7 @@ async fn accept_loop(listener: TcpListener, handle: Arc<TransportHandle>) {
 			result = listener.accept() => {
 				match result {
 					Ok((stream, addr)) => {
-						eprintln!("[network/transport] Incoming connection from {addr}");
+						crate::log(&format!("[network] Incoming connection from {addr}"));
 						let h = handle.clone();
 						tokio::spawn(async move {
 							handle_inbound(stream, h).await;
@@ -313,10 +313,10 @@ pub async fn connect_to_peer(peer: DiscoveredPeer, handle: Arc<TransportHandle>)
 			}
 		}
 
-		eprintln!(
-			"[network/transport] Connecting to {} at {}",
+		crate::log(&format!(
+			"[network] Connecting to {} at {}",
 			peer.name, peer.addr
-		);
+		));
 
 		match timeout(CONNECT_TIMEOUT, TcpStream::connect(&peer.addr)).await {
 			Ok(Ok(mut stream)) => {
@@ -437,10 +437,10 @@ async fn run_connection(
 		);
 	}
 
-	eprintln!(
-		"[network/transport] Connection established with {} ({})",
+	crate::log(&format!(
+		"[network] Connected to {} ({})",
 		peer_name, peer_node_id
-	);
+	));
 
 	// Writer task
 	let writer_peer_id = peer_node_id.clone();
@@ -524,10 +524,10 @@ async fn run_connection(
 		conns.remove(&peer_node_id);
 	}
 	handle.store.remove_peer(&peer_node_id);
-	eprintln!(
-		"[network/transport] Disconnected from {} ({})",
+	crate::log(&format!(
+		"[network] Disconnected from {} ({})",
 		peer_name, peer_node_id
-	);
+	));
 }
 
 /// Handle an incoming message from a peer.
@@ -543,10 +543,10 @@ async fn handle_message(msg: Message, peer_node_id: &str, handle: &Arc<Transport
 				seen.insert(envelope.id.clone())
 			};
 			if is_new {
-				eprintln!(
-					"[network/transport] Received note {} from {}",
-					envelope.id, envelope.sender
-				);
+				crate::log(&format!(
+					"[network] Received note from {}: \"{}\"",
+					envelope.sender, envelope.title.as_deref().unwrap_or("(untitled)")
+				));
 				if handle.store.add_note(envelope) {
 					handle.store.sync_to_disk();
 				}
@@ -555,7 +555,7 @@ async fn handle_message(msg: Message, peer_node_id: &str, handle: &Arc<Transport
 		Message::Retract { note_id } => {
 			if handle.store.remove_note(&note_id) {
 				handle.store.sync_to_disk();
-				eprintln!("[network/transport] Retracted note {note_id}");
+				crate::log(&format!("[network] Retracted note {note_id}"));
 			}
 		}
 		Message::Sync { notes } => {
@@ -571,7 +571,7 @@ async fn handle_message(msg: Message, peer_node_id: &str, handle: &Arc<Transport
 			}
 			if added > 0 {
 				handle.store.sync_to_disk();
-				eprintln!("[network/transport] Synced {added} notes from {peer_node_id}");
+				crate::log(&format!("[network] Synced {added} notes from {peer_node_id}"));
 			}
 		}
 		Message::Hello { .. } => {

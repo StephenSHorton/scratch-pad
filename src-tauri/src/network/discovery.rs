@@ -76,7 +76,7 @@ pub fn start_discovery(
 			if let Err(e) = daemon.register(service_info) {
 				eprintln!("[network/discovery] Failed to register mDNS service: {e}");
 			} else {
-				eprintln!("[network/discovery] Registered mDNS service: {instance_name} on port {tcp_port}");
+				crate::log(&format!("[network] Registered mDNS service: {instance_name} on port {tcp_port}"));
 			}
 		}
 		Err(e) => {
@@ -127,10 +127,10 @@ pub fn start_discovery(
 						// Only emit if we haven't seen this node yet
 						let mut seen = seen_nodes.lock().unwrap();
 						if seen.insert(peer_node_id.clone()) {
-							eprintln!(
-								"[network/discovery] Discovered peer: {} ({}) at {}",
+							crate::log(&format!(
+								"[network] Discovered peer: {} ({}) at {}",
 								peer_name, peer_node_id, addr
-							);
+							));
 							let _ = tx.send(DiscoveredPeer {
 								node_id: peer_node_id,
 								name: peer_name,

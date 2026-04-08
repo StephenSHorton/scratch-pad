@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
 // Note type
 interface Note {
@@ -209,12 +209,51 @@ function StickyNote() {
 	const [titleHovered, setTitleHovered] = useState(false);
 	const [bodyHovered, setBodyHovered] = useState(false);
 
-	// Detect if this is a remote note window
+	// Log viewer state
+	const [logContent, setLogContent] = useState("");
+	const [logFilter, setLogFilter] = useState<string | null>(null);
+
+	// Highlight (emphasis) state — set by AI via MCP, cleared on user click
+	const [highlightPattern, setHighlightPattern] = useState<string | null>(null);
+
+	// Detect window type
 	const windowLabel = getCurrentWindow().label;
 	const isRemote = windowLabel.startsWith("remote-");
+	const isLogs = windowLabel === "logs";
 	const noteId = isRemote ? windowLabel.replace("remote-", "") : windowLabel;
 
+	// Log viewer: poll for new content every 1.5s
 	useEffect(() => {
+		if (!isLogs) return;
+		const fetchLogs = () => {
+			invoke<string>("read_log_tail", { lines: 200 }).then(setLogContent);
+		};
+		fetchLogs();
+		const interval = setInterval(fetchLogs, 1500);
+
+		// Listen for filter updates from MCP
+		const unlisten = listen<string>("log-filter", (event) => {
+			setLogFilter(event.payload);
+		});
+		return () => {
+			clearInterval(interval);
+			unlisten.then((fn) => fn());
+		};
+	}, [isLogs]);
+
+	// Listen for highlight events from MCP (local notes only)
+	useEffect(() => {
+		if (isLogs || isRemote) return;
+		const unlisten = listen<string>("note-highlight", (event) => {
+			setHighlightPattern(event.payload);
+		});
+		return () => {
+			unlisten.then((fn) => fn());
+		};
+	}, [isLogs, isRemote]);
+
+	useEffect(() => {
+		if (isLogs) return; // Skip note fetching for log viewer
 		if (isRemote) {
 			// Fetch remote note data from Tauri backend
 			invoke<RemoteNote | null>("get_remote_note", { id: noteId }).then(
@@ -284,10 +323,153 @@ function StickyNote() {
 		getCurrentWindow().startDragging();
 	}, []);
 
-	const renderedBody = useMemo(
+	// Dismiss highlight — clears local state AND removes from highlights.json
+	const dismissHighlight = useCallback(() => {
+		setHighlightPattern(null);
+		if (note) {
+			invoke("clear_note_highlight", { id: note.id }).catch(() => {});
+		}
+	}, [note]);
+
+	const renderedBodyHtml = useMemo(
 		() => (note ? renderMarkdown(note.body) : ""),
 		[note?.body, note],
 	);
+
+	// Compute structured line data when highlighting is active
+	const highlightedLines = useMemo(() => {
+		if (!highlightPattern || !renderedBodyHtml) return null;
+		const lower = highlightPattern.toLowerCase();
+		const lines = renderedBodyHtml.split("\n");
+		const matchIndices: number[] = [];
+		lines.forEach((line, i) => {
+			// Strip HTML tags before matching so we match against visible text
+			const text = line.replace(/<[^>]*>/g, "").toLowerCase();
+			if (text.includes(lower)) matchIndices.push(i);
+		});
+		return {
+			lines,
+			matchIndices,
+			lastMatchIdx:
+				matchIndices.length > 0 ? matchIndices[matchIndices.length - 1] : -1,
+		};
+	}, [renderedBodyHtml, highlightPattern]);
+
+	// Log viewer rendering
+	if (isLogs) {
+		return (
+			<div
+				onMouseDown={handleMouseDown}
+				style={{
+					background: "#1e1e1e",
+					color: "#d4d4d4",
+					borderRadius: "8px",
+					padding: "12px",
+					height: "100vh",
+					display: "flex",
+					flexDirection: "column",
+					boxShadow: "0 4px 24px rgba(0,0,0,0.3), 0 1.5px 6px rgba(0,0,0,0.15)",
+					fontFamily: "'SF Mono', 'Menlo', 'Consolas', monospace",
+					cursor: "grab",
+					userSelect: "none",
+					overflow: "hidden",
+				}}
+			>
+				<div
+					style={{
+						display: "flex",
+						justifyContent: "space-between",
+						alignItems: "center",
+						marginBottom: "8px",
+					}}
+				>
+					<span style={{ fontSize: "11px", fontWeight: 600, color: "#7ec699", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+						Live Logs
+					</span>
+					<button
+						type="button"
+						onClick={() => getCurrentWindow().close()}
+						style={{
+							background: "none",
+							border: "none",
+							color: "#666",
+							fontSize: "16px",
+							cursor: "pointer",
+							padding: "2px 4px",
+							lineHeight: 1,
+						}}
+						onMouseEnter={(e) => (e.currentTarget.style.color = "#d4d4d4")}
+						onMouseLeave={(e) => (e.currentTarget.style.color = "#666")}
+					>
+						{"\u2715"}
+					</button>
+				</div>
+				{logFilter && (
+					<div
+						style={{
+							fontSize: "9px",
+							color: "#7ec699",
+							marginBottom: "4px",
+							display: "flex",
+							justifyContent: "space-between",
+							alignItems: "center",
+						}}
+					>
+						<span>filter: "{logFilter}"</span>
+						<button
+							type="button"
+							onClick={() => setLogFilter(null)}
+							style={{
+								background: "none",
+								border: "none",
+								color: "#666",
+								fontSize: "10px",
+								cursor: "pointer",
+								padding: "0 4px",
+							}}
+						>
+							clear
+						</button>
+					</div>
+				)}
+				<div
+					ref={(el) => {
+						if (el) el.scrollTop = el.scrollHeight;
+					}}
+					style={{
+						flex: 1,
+						fontSize: "10.5px",
+						lineHeight: 1.6,
+						overflowY: "auto",
+						whiteSpace: "pre-wrap",
+						wordBreak: "break-all",
+						color: "#b5b5b5",
+					}}
+				>
+					{logContent
+						.split("\n")
+						.filter((line) => !logFilter || line.toLowerCase().includes(logFilter.toLowerCase()))
+						.map((line, i) => (
+						<div
+							key={i}
+							style={{
+								padding: "1px 0",
+								color: line.includes("error") || line.includes("Error")
+									? "#f48771"
+									: line.includes("[network")
+										? "#569cd6"
+										: line.includes("Creating window")
+											? "#7ec699"
+											: "#b5b5b5",
+							}}
+						>
+							{line}
+						</div>
+					))}
+				</div>
+			</div>
+		);
+	}
 
 	if (!note) return null;
 
@@ -659,7 +841,7 @@ function StickyNote() {
 					onMouseLeave={() => setBodyHovered(false)}
 					style={{ flex: 1, position: "relative", overflow: "hidden" }}
 				>
-					{!isRemote && bodyHovered && (
+					{!isRemote && bodyHovered && !highlightPattern && (
 						<button
 							type="button"
 							onClick={() => {
@@ -691,22 +873,87 @@ function StickyNote() {
 							</svg>
 						</button>
 					)}
-					<div
-						className="md-body"
-						style={{
-							flex: 1,
-							fontSize: "13px",
-							lineHeight: 1.5,
-							overflowY: "auto",
-							paddingRight: "4px",
-							wordBreak: "break-word",
-							cursor: "grab",
-							height: "100%",
-						}}
-						dangerouslySetInnerHTML={{
-							__html: renderedBody,
-						}}
-					/>
+					{highlightedLines ? (
+						<div
+							className="md-body"
+							style={{
+								flex: 1,
+								fontSize: "13px",
+								lineHeight: 1.5,
+								overflowY: "auto",
+								paddingRight: "4px",
+								wordBreak: "break-word",
+								cursor: "grab",
+								height: "100%",
+							}}
+						>
+							{highlightedLines.lines.map((line, i) => {
+								const matches = highlightedLines.matchIndices.includes(i);
+								return (
+									<Fragment key={i}>
+										<div
+											style={{
+												opacity: matches ? 1 : 0.18,
+												background: matches
+													? "rgba(255, 235, 59, 0.3)"
+													: "transparent",
+												borderRadius: "3px",
+												padding: matches ? "1px 4px" : "0",
+												margin: matches ? "0 -4px" : "0",
+												transition: "opacity 0.3s",
+											}}
+											dangerouslySetInnerHTML={{ __html: line }}
+										/>
+										{i === highlightedLines.lastMatchIdx && (
+											<div
+												style={{
+													padding: "10px 0 4px",
+													display: "flex",
+													justifyContent: "flex-start",
+												}}
+											>
+												<button
+													type="button"
+													onClick={dismissHighlight}
+													onMouseDown={(e) => e.stopPropagation()}
+													style={{
+														background: colors.text,
+														color: colors.bg,
+														border: "none",
+														borderRadius: "4px",
+														padding: "4px 12px",
+														fontSize: "10px",
+														fontWeight: 600,
+														cursor: "pointer",
+														boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
+													}}
+												>
+													Got it
+												</button>
+											</div>
+										)}
+									</Fragment>
+								);
+							})}
+						</div>
+					) : (
+						<div
+							className="md-body"
+							style={{
+								flex: 1,
+								fontSize: "13px",
+								lineHeight: 1.5,
+								overflowY: "auto",
+								paddingRight: "4px",
+								wordBreak: "break-word",
+								cursor: "grab",
+								height: "100%",
+							}}
+							dangerouslySetInnerHTML={{
+								__html: renderedBodyHtml,
+							}}
+						/>
+					)}
 				</div>
 			)}
 
