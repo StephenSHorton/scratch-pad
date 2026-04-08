@@ -15,6 +15,7 @@ import { MarkdownShortcutPlugin } from "@lexical/react/LexicalMarkdownShortcutPl
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import { useLexicalComposerContext } from "@lexical/react/LexicalComposerContext";
 import { HeadingNode, QuoteNode } from "@lexical/rich-text";
+import { BlockHandlesPlugin } from "./BlockHandlesPlugin";
 import { SlashMenuPlugin } from "./SlashMenuPlugin";
 import { $getRoot, type EditorState, type LexicalEditor } from "lexical";
 import {
@@ -380,6 +381,13 @@ function NoteEditorInner({
 			<ListPlugin />
 			<MarkdownShortcutPlugin transformers={TRANSFORMERS} />
 			{editable && <SlashMenuPlugin />}
+			{editable && (
+				<BlockHandlesPlugin
+					editable={editable}
+					textColor={textColor}
+					containerRef={containerRef}
+				/>
+			)}
 			<EditableSyncPlugin editable={editable} />
 			<ExternalBodySyncPlugin body={body} editable={editable} />
 			<AutoFocusOnEditPlugin editable={editable} />

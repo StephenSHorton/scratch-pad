@@ -320,7 +320,7 @@ function StickyNote() {
 				background: colors.bg,
 				color: colors.text,
 				borderRadius: "8px",
-				padding: "16px 10px",
+				padding: "16px 10px 16px 4px",
 				height: "100vh",
 				display: "flex",
 				flexDirection: "column",
