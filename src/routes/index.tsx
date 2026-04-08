@@ -2,7 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { NoteEditor } from "../lexical/NoteEditor";
 
 // Note type
 interface Note {
@@ -37,143 +38,6 @@ const NOTE_COLORS = {
 	green: { bg: "#C8E6C9", text: "#1B5E20", dismiss: "#8FBA91" },
 } as const;
 
-// ---------------------------------------------------------------------------
-// Lightweight markdown-to-HTML renderer
-// ---------------------------------------------------------------------------
-
-function renderMarkdown(md: string): string {
-	// Escape HTML entities first
-	let html = md
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;");
-
-	// Fenced code blocks: ```lang\n...\n```
-	html = html.replace(
-		/```[\w]*\n([\s\S]*?)```/g,
-		(_match, code) =>
-			`<pre class="md-code-block"><code>${code.replace(/\n$/, "")}</code></pre>`,
-	);
-
-	// Split into lines for block-level processing, but preserve code blocks
-	const codeBlockPlaceholders: string[] = [];
-	html = html.replace(/<pre class="md-code-block">[\s\S]*?<\/pre>/g, (m) => {
-		codeBlockPlaceholders.push(m);
-		return `%%CODEBLOCK_${codeBlockPlaceholders.length - 1}%%`;
-	});
-
-	const lines = html.split("\n");
-	const result: string[] = [];
-	let inUl = false;
-	let inOl = false;
-
-	for (let i = 0; i < lines.length; i++) {
-		let line = lines[i];
-
-		// Check for code block placeholder
-		const placeholderMatch = line.match(/^%%CODEBLOCK_(\d+)%%$/);
-		if (placeholderMatch) {
-			if (inUl) {
-				result.push("</ul>");
-				inUl = false;
-			}
-			if (inOl) {
-				result.push("</ol>");
-				inOl = false;
-			}
-			result.push(codeBlockPlaceholders[Number(placeholderMatch[1])]);
-			continue;
-		}
-
-		// Apply inline formatting
-		line = applyInlineFormatting(line);
-
-		// Headers
-		const h3 = line.match(/^###\s+(.*)/);
-		if (h3) {
-			closeList();
-			result.push(`<h3 class="md-h3">${h3[1]}</h3>`);
-			continue;
-		}
-		const h2 = line.match(/^##\s+(.*)/);
-		if (h2) {
-			closeList();
-			result.push(`<h2 class="md-h2">${h2[1]}</h2>`);
-			continue;
-		}
-		const h1 = line.match(/^#\s+(.*)/);
-		if (h1) {
-			closeList();
-			result.push(`<h1 class="md-h1">${h1[1]}</h1>`);
-			continue;
-		}
-
-		// Unordered list items
-		const ul = line.match(/^[-*]\s+(.*)/);
-		if (ul) {
-			if (inOl) {
-				result.push("</ol>");
-				inOl = false;
-			}
-			if (!inUl) {
-				result.push('<ul class="md-ul">');
-				inUl = true;
-			}
-			result.push(`<li>${ul[1]}</li>`);
-			continue;
-		}
-
-		// Ordered list items
-		const ol = line.match(/^\d+\.\s+(.*)/);
-		if (ol) {
-			if (inUl) {
-				result.push("</ul>");
-				inUl = false;
-			}
-			if (!inOl) {
-				result.push('<ol class="md-ol">');
-				inOl = true;
-			}
-			result.push(`<li>${ol[1]}</li>`);
-			continue;
-		}
-
-		// Close any open lists on non-list lines
-		closeList();
-
-		// Blank lines become spacing
-		if (line.trim() === "") {
-			result.push('<div class="md-spacer"></div>');
-		} else {
-			result.push(`<p class="md-p">${line}</p>`);
-		}
-	}
-
-	closeList();
-	return result.join("\n");
-
-	function closeList() {
-		if (inUl) {
-			result.push("</ul>");
-			inUl = false;
-		}
-		if (inOl) {
-			result.push("</ol>");
-			inOl = false;
-		}
-	}
-}
-
-function applyInlineFormatting(text: string): string {
-	// Inline code (must come before bold/italic to avoid conflicts)
-	text = text.replace(/`([^`]+)`/g, '<code class="md-inline-code">$1</code>');
-	// Bold
-	text = text.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-	// Italic (single * not preceded/followed by space for better accuracy)
-	text = text.replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "<em>$1</em>");
-	return text;
-}
-
 export const Route = createFileRoute("/")({
 	component: StickyNote,
 });
@@ -201,13 +65,7 @@ function StickyNote() {
 	const [note, setNote] = useState<Note | null>(null);
 	const [remoteData, setRemoteData] = useState<RemoteNote | null>(null);
 	const [confirmDelete, setConfirmDelete] = useState(false);
-	const [editing, setEditing] = useState(false);
-	const [editBody, setEditBody] = useState("");
-	const [editingTitle, setEditingTitle] = useState(false);
-	const [editTitle, setEditTitle] = useState("");
 	const [colorPickerOpen, setColorPickerOpen] = useState(false);
-	const [titleHovered, setTitleHovered] = useState(false);
-	const [bodyHovered, setBodyHovered] = useState(false);
 
 	// Log viewer state
 	const [logContent, setLogContent] = useState("");
@@ -318,8 +176,11 @@ function StickyNote() {
 
 	// Programmatic drag — more reliable than data-tauri-drag-region on macOS transparent windows
 	const handleMouseDown = useCallback((e: React.MouseEvent) => {
-		// Don't drag when clicking buttons or scrollable content
-		if ((e.target as HTMLElement).closest("button")) return;
+		const target = e.target as HTMLElement;
+		// Don't drag when clicking buttons, the editable content, or input fields
+		if (target.closest("button")) return;
+		if (target.closest(".lexical-content-editable")) return;
+		if (target.closest("input, textarea")) return;
 		getCurrentWindow().startDragging();
 	}, []);
 
@@ -330,30 +191,6 @@ function StickyNote() {
 			invoke("clear_note_highlight", { id: note.id }).catch(() => {});
 		}
 	}, [note]);
-
-	const renderedBodyHtml = useMemo(
-		() => (note ? renderMarkdown(note.body) : ""),
-		[note?.body, note],
-	);
-
-	// Compute structured line data when highlighting is active
-	const highlightedLines = useMemo(() => {
-		if (!highlightPattern || !renderedBodyHtml) return null;
-		const lower = highlightPattern.toLowerCase();
-		const lines = renderedBodyHtml.split("\n");
-		const matchIndices: number[] = [];
-		lines.forEach((line, i) => {
-			// Strip HTML tags before matching so we match against visible text
-			const text = line.replace(/<[^>]*>/g, "").toLowerCase();
-			if (text.includes(lower)) matchIndices.push(i);
-		});
-		return {
-			lines,
-			matchIndices,
-			lastMatchIdx:
-				matchIndices.length > 0 ? matchIndices[matchIndices.length - 1] : -1,
-		};
-	}, [renderedBodyHtml, highlightPattern]);
 
 	// Log viewer rendering
 	if (isLogs) {
@@ -483,7 +320,7 @@ function StickyNote() {
 				background: colors.bg,
 				color: colors.text,
 				borderRadius: "8px",
-				padding: "16px",
+				padding: "16px 10px",
 				height: "100vh",
 				display: "flex",
 				flexDirection: "column",
@@ -696,20 +533,38 @@ function StickyNote() {
 				</div>
 			)}
 
-			{/* Title — hover pencil to edit (local only) */}
-			{!isRemote && editingTitle ? (
+			{/* Title — always-present block-style input. Click to edit, Enter focuses body. */}
+			{isRemote ? (
+				note.title ? (
+					<div
+						style={{
+							fontWeight: 600,
+							fontSize: "14px",
+							marginBottom: "4px",
+							paddingLeft: "16px",
+							paddingRight: "16px",
+							marginLeft: "-6px",
+							marginRight: "50px",
+							lineHeight: 1.3,
+							cursor: "grab",
+						}}
+					>
+						{note.title}
+					</div>
+				) : null
+			) : (
 				<input
-					autoFocus
-					value={editTitle}
-					onChange={(e) => setEditTitle(e.target.value)}
-					onBlur={() => {
-						setEditingTitle(false);
-						const newTitle = editTitle.trim() || undefined;
-						if (newTitle !== note.title) {
+					className="note-title-block"
+					defaultValue={note.title ?? ""}
+					placeholder="Add title..."
+					onMouseDown={(e) => e.stopPropagation()}
+					onBlur={(e) => {
+						const newTitle = e.target.value.trim();
+						if (newTitle !== (note.title ?? "")) {
 							invoke<Note | null>("update_note_body", {
 								id: note.id,
 								body: note.body,
-								title: newTitle ?? "",
+								title: newTitle,
 							}).then((updated) => {
 								if (updated) setNote(updated);
 							});
@@ -717,245 +572,63 @@ function StickyNote() {
 					}}
 					onKeyDown={(e) => {
 						if (e.key === "Enter") {
-							(e.target as HTMLInputElement).blur();
+							e.preventDefault();
+							// Move focus to the body editor
+							const editable = document.querySelector(
+								".lexical-content-editable",
+							);
+							if (editable instanceof HTMLElement) {
+								editable.focus();
+							}
 						}
 						if (e.key === "Escape") {
-							setEditingTitle(false);
-							setEditTitle(note.title ?? "");
+							(e.target as HTMLInputElement).blur();
 						}
 					}}
-					onMouseDown={(e) => e.stopPropagation()}
-					placeholder="Title"
 					style={{
 						fontWeight: 600,
 						fontSize: "14px",
-						marginBottom: "8px",
-						paddingRight: "60px",
+						marginBottom: "4px",
 						lineHeight: 1.3,
-						background: "rgba(0,0,0,0.04)",
+						background: "transparent",
 						color: colors.text,
-						border: "1px solid rgba(0,0,0,0.1)",
-						borderRadius: "4px",
-						padding: "4px 8px",
+						border: "none",
 						outline: "none",
-						width: "100%",
 						boxSizing: "border-box",
 						fontFamily: "inherit",
 						cursor: "text",
 					}}
 				/>
-			) : (
-				<div
-					onMouseEnter={() => setTitleHovered(true)}
-					onMouseLeave={() => setTitleHovered(false)}
-					style={{
-						fontWeight: 600,
-						fontSize: note.title ? "14px" : "12px",
-						marginBottom: "8px",
-						paddingRight: isRemote ? "0" : "60px",
-						lineHeight: 1.3,
-						cursor: "grab",
-						opacity: note.title ? 1 : isRemote ? 0 : 0.35,
-						display: isRemote && !note.title ? "none" : undefined,
-						alignItems: "center",
-						gap: "4px",
-					}}
-				>
-					{isRemote ? note.title : note.title || "Add title..."}
-					{!isRemote && titleHovered && (
-						<button
-							type="button"
-							onClick={() => {
-								setEditTitle(note.title ?? "");
-								setEditingTitle(true);
-							}}
-							onMouseDown={(e) => e.stopPropagation()}
-							style={{
-								background: "none",
-								border: "none",
-								cursor: "pointer",
-								padding: "2px",
-								opacity: 0.4,
-								fontSize: "12px",
-								lineHeight: 1,
-								color: colors.text,
-								marginLeft: "4px",
-								verticalAlign: "middle",
-								display: "inline-block",
-							}}
-							onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.8")}
-							onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.4")}
-						>
-							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-								<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-								<path d="m15 5 4 4" />
-							</svg>
-						</button>
-					)}
-				</div>
 			)}
 
-			{/* Body — hover pencil to edit, blur to save (local only) */}
-			{!isRemote && editing ? (
-				<textarea
-					autoFocus
-					value={editBody}
-					onChange={(e) => setEditBody(e.target.value)}
-					onBlur={() => {
-						setEditing(false);
-						if (editBody !== note.body) {
+			{/* Body — Lexical editor; click any block to start editing */}
+			<div
+				style={{
+					flex: 1,
+					position: "relative",
+					overflow: "hidden",
+					display: "flex",
+					flexDirection: "column",
+				}}
+			>
+				<NoteEditor
+					body={note.body}
+					editable={!isRemote}
+					textColor={colors.text}
+					highlightPattern={highlightPattern}
+					onDismissHighlight={dismissHighlight}
+					onChange={(newBody) => {
+						if (newBody !== note.body) {
 							invoke<Note | null>("update_note_body", {
 								id: note.id,
-								body: editBody,
+								body: newBody,
 							}).then((updated) => {
 								if (updated) setNote(updated);
 							});
 						}
 					}}
-					onKeyDown={(e) => {
-						if (e.key === "Escape") {
-							setEditing(false);
-							setEditBody(note.body);
-						}
-					}}
-					onMouseDown={(e) => e.stopPropagation()}
-					style={{
-						flex: 1,
-						fontSize: "13px",
-						lineHeight: 1.5,
-						fontFamily: "'SF Mono', 'Menlo', 'Consolas', monospace",
-						background: "rgba(0,0,0,0.04)",
-						color: colors.text,
-						border: "1px solid rgba(0,0,0,0.1)",
-						borderRadius: "4px",
-						padding: "8px",
-						resize: "none",
-						outline: "none",
-						cursor: "text",
-						userSelect: "text",
-					}}
 				/>
-			) : (
-				<div
-					onMouseEnter={() => setBodyHovered(true)}
-					onMouseLeave={() => setBodyHovered(false)}
-					style={{ flex: 1, position: "relative", overflow: "hidden" }}
-				>
-					{!isRemote && bodyHovered && !highlightPattern && (
-						<button
-							type="button"
-							onClick={() => {
-								setEditBody(note.body);
-								setEditing(true);
-							}}
-							onMouseDown={(e) => e.stopPropagation()}
-							style={{
-								position: "absolute",
-								top: "2px",
-								right: "2px",
-								background: `${colors.bg}ee`,
-								border: "none",
-								cursor: "pointer",
-								padding: "3px",
-								opacity: 0.4,
-								fontSize: "12px",
-								lineHeight: 1,
-								color: colors.text,
-								borderRadius: "3px",
-								zIndex: 10,
-							}}
-							onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.8")}
-							onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.4")}
-						>
-							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-								<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-								<path d="m15 5 4 4" />
-							</svg>
-						</button>
-					)}
-					{highlightedLines ? (
-						<div
-							className="md-body"
-							style={{
-								flex: 1,
-								fontSize: "13px",
-								lineHeight: 1.5,
-								overflowY: "auto",
-								paddingRight: "4px",
-								wordBreak: "break-word",
-								cursor: "grab",
-								height: "100%",
-							}}
-						>
-							{highlightedLines.lines.map((line, i) => {
-								const matches = highlightedLines.matchIndices.includes(i);
-								return (
-									<Fragment key={i}>
-										<div
-											style={{
-												opacity: matches ? 1 : 0.18,
-												background: matches
-													? "rgba(255, 235, 59, 0.3)"
-													: "transparent",
-												borderRadius: "3px",
-												padding: matches ? "1px 4px" : "0",
-												margin: matches ? "0 -4px" : "0",
-												transition: "opacity 0.3s",
-											}}
-											dangerouslySetInnerHTML={{ __html: line }}
-										/>
-										{i === highlightedLines.lastMatchIdx && (
-											<div
-												style={{
-													padding: "10px 0 4px",
-													display: "flex",
-													justifyContent: "flex-start",
-												}}
-											>
-												<button
-													type="button"
-													onClick={dismissHighlight}
-													onMouseDown={(e) => e.stopPropagation()}
-													style={{
-														background: colors.text,
-														color: colors.bg,
-														border: "none",
-														borderRadius: "4px",
-														padding: "4px 12px",
-														fontSize: "10px",
-														fontWeight: 600,
-														cursor: "pointer",
-														boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
-													}}
-												>
-													Got it
-												</button>
-											</div>
-										)}
-									</Fragment>
-								);
-							})}
-						</div>
-					) : (
-						<div
-							className="md-body"
-							style={{
-								flex: 1,
-								fontSize: "13px",
-								lineHeight: 1.5,
-								overflowY: "auto",
-								paddingRight: "4px",
-								wordBreak: "break-word",
-								cursor: "grab",
-								height: "100%",
-							}}
-							dangerouslySetInnerHTML={{
-								__html: renderedBodyHtml,
-							}}
-						/>
-					)}
-				</div>
-			)}
+			</div>
 
 			{/* Timestamp / attribution */}
 			<div
