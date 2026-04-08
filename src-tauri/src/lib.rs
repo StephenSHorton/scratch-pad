@@ -471,6 +471,21 @@ fn sync_windows(app: &AppHandle, state: &NotesState) {
         true
     });
 
+    // Sanitize absurd positions (e.g. from coordinate system mismatches)
+    let mut needs_write = false;
+    for note in notes.iter_mut() {
+        if let Some(ref pos) = note.position {
+            if pos.x.abs() > 20000.0 || pos.y.abs() > 20000.0 {
+                log(&format!("Resetting absurd position for note {}: ({}, {})", note.id, pos.x, pos.y));
+                note.position = None;
+                needs_write = true;
+            }
+        }
+    }
+    if needs_write {
+        write_notes(&notes);
+    }
+
     // Collect IDs of current notes
     let note_ids: Vec<String> = notes.iter().map(|n| n.id.clone()).collect();
 

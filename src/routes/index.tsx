@@ -206,6 +206,8 @@ function StickyNote() {
 	const [editingTitle, setEditingTitle] = useState(false);
 	const [editTitle, setEditTitle] = useState("");
 	const [colorPickerOpen, setColorPickerOpen] = useState(false);
+	const [titleHovered, setTitleHovered] = useState(false);
+	const [bodyHovered, setBodyHovered] = useState(false);
 
 	// Detect if this is a remote note window
 	const windowLabel = getCurrentWindow().label;
@@ -253,17 +255,19 @@ function StickyNote() {
 	}, [isRemote, noteId]);
 
 	// Save position when window is moved (local notes only)
+	// onMoved returns PhysicalPosition — convert to logical for consistent storage
 	useEffect(() => {
 		if (!note || isRemote) return;
 		const win = getCurrentWindow();
 		let timeout: ReturnType<typeof setTimeout>;
-		const unlisten = win.onMoved((event) => {
+		const unlisten = win.onMoved(async (event) => {
 			clearTimeout(timeout);
+			const scaleFactor = await win.scaleFactor();
 			timeout = setTimeout(() => {
 				invoke("update_note_position", {
 					id: note.id,
-					x: event.payload.x,
-					y: event.payload.y,
+					x: event.payload.x / scaleFactor,
+					y: event.payload.y / scaleFactor,
 				});
 			}, 500); // debounce
 		});
@@ -510,7 +514,7 @@ function StickyNote() {
 				</div>
 			)}
 
-			{/* Title — double-click to edit (local only) */}
+			{/* Title — hover pencil to edit (local only) */}
 			{!isRemote && editingTitle ? (
 				<input
 					autoFocus
@@ -560,30 +564,56 @@ function StickyNote() {
 				/>
 			) : (
 				<div
-					onDoubleClick={
-						isRemote
-							? undefined
-							: () => {
-									setEditTitle(note.title ?? "");
-									setEditingTitle(true);
-								}
-					}
+					onMouseEnter={() => setTitleHovered(true)}
+					onMouseLeave={() => setTitleHovered(false)}
 					style={{
 						fontWeight: 600,
 						fontSize: note.title ? "14px" : "12px",
 						marginBottom: "8px",
 						paddingRight: isRemote ? "0" : "60px",
 						lineHeight: 1.3,
-						cursor: isRemote ? "default" : "text",
+						cursor: "grab",
 						opacity: note.title ? 1 : isRemote ? 0 : 0.35,
 						display: isRemote && !note.title ? "none" : undefined,
+						alignItems: "center",
+						gap: "4px",
 					}}
 				>
 					{isRemote ? note.title : note.title || "Add title..."}
+					{!isRemote && titleHovered && (
+						<button
+							type="button"
+							onClick={() => {
+								setEditTitle(note.title ?? "");
+								setEditingTitle(true);
+							}}
+							onMouseDown={(e) => e.stopPropagation()}
+							style={{
+								background: "none",
+								border: "none",
+								cursor: "pointer",
+								padding: "2px",
+								opacity: 0.4,
+								fontSize: "12px",
+								lineHeight: 1,
+								color: colors.text,
+								marginLeft: "4px",
+								verticalAlign: "middle",
+								display: "inline-block",
+							}}
+							onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.8")}
+							onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.4")}
+						>
+							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+								<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+								<path d="m15 5 4 4" />
+							</svg>
+						</button>
+					)}
 				</div>
 			)}
 
-			{/* Body — click to edit, blur to save (local only) */}
+			{/* Body — hover pencil to edit, blur to save (local only) */}
 			{!isRemote && editing ? (
 				<textarea
 					autoFocus
@@ -625,28 +655,59 @@ function StickyNote() {
 				/>
 			) : (
 				<div
-					className="md-body"
-					onDoubleClick={
-						isRemote
-							? undefined
-							: () => {
-									setEditBody(note.body);
-									setEditing(true);
-								}
-					}
-					style={{
-						flex: 1,
-						fontSize: "13px",
-						lineHeight: 1.5,
-						overflowY: "auto",
-						paddingRight: "4px",
-						wordBreak: "break-word",
-						cursor: isRemote ? "default" : "text",
-					}}
-					dangerouslySetInnerHTML={{
-						__html: renderedBody,
-					}}
-				/>
+					onMouseEnter={() => setBodyHovered(true)}
+					onMouseLeave={() => setBodyHovered(false)}
+					style={{ flex: 1, position: "relative", overflow: "hidden" }}
+				>
+					{!isRemote && bodyHovered && (
+						<button
+							type="button"
+							onClick={() => {
+								setEditBody(note.body);
+								setEditing(true);
+							}}
+							onMouseDown={(e) => e.stopPropagation()}
+							style={{
+								position: "absolute",
+								top: "2px",
+								right: "2px",
+								background: `${colors.bg}ee`,
+								border: "none",
+								cursor: "pointer",
+								padding: "3px",
+								opacity: 0.4,
+								fontSize: "12px",
+								lineHeight: 1,
+								color: colors.text,
+								borderRadius: "3px",
+								zIndex: 10,
+							}}
+							onMouseEnter={(e) => (e.currentTarget.style.opacity = "0.8")}
+							onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.4")}
+						>
+							<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+								<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+								<path d="m15 5 4 4" />
+							</svg>
+						</button>
+					)}
+					<div
+						className="md-body"
+						style={{
+							flex: 1,
+							fontSize: "13px",
+							lineHeight: 1.5,
+							overflowY: "auto",
+							paddingRight: "4px",
+							wordBreak: "break-word",
+							cursor: "grab",
+							height: "100%",
+						}}
+						dangerouslySetInnerHTML={{
+							__html: renderedBody,
+						}}
+					/>
+				</div>
 			)}
 
 			{/* Timestamp / attribution */}
