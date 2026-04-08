@@ -33,3 +33,6 @@ mcp-server/node_modules/
 
 # Tanstack
 .tanstack
+
+# OMC
+.omc/

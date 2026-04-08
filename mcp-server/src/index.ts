@@ -135,7 +135,7 @@ const server = new McpServer({
 
 server.tool(
   "note_create",
-  "Create a new scratch pad note on the desktop. Supports markdown content. The note appears as a floating window the user can see. Do not repeat the title in the body — the title is displayed separately above the body. Set scope to share the note with peers on the network.",
+  "Create a new scratch pad note on the desktop. Supports markdown content. The note appears as a floating window the user can see. Do not repeat the title in the body — the title is displayed separately above the body. Set scope to share the note with peers on the network. Choose a width and height appropriate for the content: use wider notes for tables or code blocks, taller notes for long lists, and compact sizes for short messages. The default is 380x320.",
   {
     body: z.string().describe("The note content (do not include the title here — it is shown separately)"),
     title: z.string().optional().describe("Optional note title (displayed separately above the body)"),
@@ -144,6 +144,14 @@ server.tool(
       .optional()
       .default("yellow")
       .describe("Note color (default: yellow)"),
+    width: z
+      .number()
+      .optional()
+      .describe("Window width in pixels. Choose based on content — e.g. 300 for short messages, 500+ for tables or code. Default: 380"),
+    height: z
+      .number()
+      .optional()
+      .describe("Window height in pixels. Choose based on content — e.g. 200 for brief notes, 400+ for long lists. Default: 320"),
     ttl: z
       .number()
       .optional()
@@ -160,8 +168,8 @@ server.tool(
       .default("fyi")
       .describe("Note intent when sharing (default: fyi)"),
   },
-  async ({ body, title, color, ttl, scope, intent }) => {
-    log(`note_create: "${title || "(untitled)"}" [${color}] scope=${scope}`);
+  async ({ body, title, color, width, height, ttl, scope, intent }) => {
+    log(`note_create: "${title || "(untitled)"}" [${color}] ${width || 380}x${height || 320} scope=${scope}`);
     const now = new Date();
     const note: Note = {
       id: crypto.randomUUID(),
@@ -173,7 +181,9 @@ server.tool(
         ? new Date(now.getTime() + ttl * 60 * 60 * 1000).toISOString()
         : null,
       position: null,
-      size: null,
+      size: width != null || height != null
+        ? { width: width ?? 380, height: height ?? 320 }
+        : null,
     };
 
     const notes = readNotes();
