@@ -19,101 +19,18 @@ import {
 } from "lexical";
 import { type JSX, useCallback, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { type BlockTypeDef, filterBlockTypes } from "./blockTypes";
 
 // ---------------------------------------------------------------------------
-// Slash menu options — block type conversions available via "/"
-// ---------------------------------------------------------------------------
-type SlashOptionKey =
-	| "paragraph"
-	| "h1"
-	| "h2"
-	| "h3"
-	| "ul"
-	| "ol"
-	| "quote"
-	| "code";
-
-interface SlashOptionDef {
-	key: SlashOptionKey;
-	label: string;
-	description: string;
-	keywords: string[];
-}
-
-const SLASH_OPTIONS: readonly SlashOptionDef[] = [
-	{
-		key: "paragraph",
-		label: "Text",
-		description: "Plain text paragraph",
-		keywords: ["paragraph", "text", "p"],
-	},
-	{
-		key: "h1",
-		label: "Heading 1",
-		description: "Big section heading",
-		keywords: ["h1", "heading", "title"],
-	},
-	{
-		key: "h2",
-		label: "Heading 2",
-		description: "Medium section heading",
-		keywords: ["h2", "heading"],
-	},
-	{
-		key: "h3",
-		label: "Heading 3",
-		description: "Small section heading",
-		keywords: ["h3", "heading"],
-	},
-	{
-		key: "ul",
-		label: "Bulleted list",
-		description: "Simple bulleted list",
-		keywords: ["ul", "bullet", "list"],
-	},
-	{
-		key: "ol",
-		label: "Numbered list",
-		description: "Numbered list",
-		keywords: ["ol", "ordered", "number", "list"],
-	},
-	{
-		key: "quote",
-		label: "Quote",
-		description: "Block quote",
-		keywords: ["quote", "blockquote"],
-	},
-	{
-		key: "code",
-		label: "Code",
-		description: "Code block with syntax",
-		keywords: ["code", "snippet"],
-	},
-];
-
-// ---------------------------------------------------------------------------
-// MenuOption subclass — carries the slash option definition
+// MenuOption subclass — carries the shared block-type definition
 // ---------------------------------------------------------------------------
 class SlashMenuOption extends MenuOption {
-	def: SlashOptionDef;
+	def: BlockTypeDef;
 
-	constructor(def: SlashOptionDef) {
+	constructor(def: BlockTypeDef) {
 		super(def.key);
 		this.def = def;
 	}
-}
-
-// ---------------------------------------------------------------------------
-// Filter logic — match query against key + keywords (case insensitive,
-// substring match). Empty query returns everything.
-// ---------------------------------------------------------------------------
-function filterOptions(query: string): SlashOptionDef[] {
-	const trimmed = query.trim().toLowerCase();
-	if (!trimmed) return [...SLASH_OPTIONS];
-	return SLASH_OPTIONS.filter((opt) => {
-		if (opt.key.toLowerCase().includes(trimmed)) return true;
-		return opt.keywords.some((kw) => kw.toLowerCase().includes(trimmed));
-	});
 }
 
 // ---------------------------------------------------------------------------
@@ -133,7 +50,7 @@ export function SlashMenuPlugin(): JSX.Element | null {
 
 	// Compute the visible options based on the current query.
 	const options = useMemo<SlashMenuOption[]>(() => {
-		const filtered = filterOptions(query ?? "");
+		const filtered = filterBlockTypes(query ?? "");
 		return filtered.map((def) => new SlashMenuOption(def));
 	}, [query]);
 
