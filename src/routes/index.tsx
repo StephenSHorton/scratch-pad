@@ -121,7 +121,7 @@ function StickyNote() {
 		};
 		fetchPeers();
 		const interval = setInterval(fetchPeers, 2000);
-		const unlistenConnect = listen<{ node_id: string; name: string }>("peer-connected", (event) => {
+		const unlistenConnect = listen<{ node_id: string; name: string }>("peer-connected", () => {
 			fetchPeers();
 		});
 		const unlistenDisconnect = listen<{ node_id: string }>("peer-disconnected", () => {
@@ -360,7 +360,7 @@ function StickyNote() {
 			setLobbyError(null);
 			setLobbyLoading(true);
 			try {
-				const result = await invoke<{ peer_name: string; peer_id: string }>("join_room", { code: joinCode.trim() });
+				await invoke<{ peer_name: string; peer_id: string }>("join_room", { code: joinCode.trim() });
 				setJoinCode("");
 				setLobbyLoading(false);
 			} catch (e) {
