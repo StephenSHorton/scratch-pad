@@ -62,8 +62,36 @@ jobs:
           prerelease: false
           args: --target x86_64-apple-darwin
 
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - run: bun install
+      - run: cd mcp-server && bun install
+      - name: Build MCP sidecar
+        run: cd mcp-server && bun build --compile --minify --target=bun-windows-x64 src/index.ts --outfile ../src-tauri/binaries/scratch-pad-mcp-x86_64-pc-windows-msvc.exe
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Scratch Pad ${{ github.ref_name }}'
+          releaseBody: 'See the assets below to download and install.'
+          releaseDraft: false
+          prerelease: false
+          args: --target x86_64-pc-windows-msvc
+
   updater:
-    needs: [build-aarch64, build-x64]
+    needs: [build-aarch64, build-x64, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -85,13 +113,14 @@ jobs:
           PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           REPO="https://github.com/${{ github.repository }}"
 
-          # Download the tar.gz files from the release
+          # Download the bundles from the release
           mkdir -p bundles
           gh release download "$TAG" --repo "${{ github.repository }}" --pattern "*.app.tar.gz" --dir bundles
+          gh release download "$TAG" --repo "${{ github.repository }}" --pattern "*.nsis.zip" --dir bundles || echo "No NSIS bundle found (Windows build may still be running)"
           echo "Downloaded bundles:"
           ls -la bundles/
 
-          # Sign each bundle
+          # Sign macOS bundles
           cargo tauri signer sign bundles/Scratch.Pad_aarch64.app.tar.gz --private-key-path <(echo "$TAURI_SIGNING_PRIVATE_KEY") --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" 2>/dev/null || \
           cargo tauri signer sign "bundles/Scratch.Pad_aarch64.app.tar.gz" -k "$TAURI_SIGNING_PRIVATE_KEY" -p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
 
@@ -103,6 +132,24 @@ jobs:
 
           echo "aarch64 sig length: ${#AARCH64_SIG}"
           echo "x64 sig length: ${#X64_SIG}"
+
+          # Sign Windows NSIS bundle if present
+          WIN_PLATFORM=""
+          NSIS_FILE=$(ls bundles/*_x64-setup.nsis.zip 2>/dev/null | head -1)
+          if [ -n "$NSIS_FILE" ]; then
+            cargo tauri signer sign "$NSIS_FILE" --private-key-path <(echo "$TAURI_SIGNING_PRIVATE_KEY") --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" 2>/dev/null || \
+            cargo tauri signer sign "$NSIS_FILE" -k "$TAURI_SIGNING_PRIVATE_KEY" -p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+            WIN_SIG=$(cat "${NSIS_FILE}.sig")
+            NSIS_BASENAME=$(basename "$NSIS_FILE")
+            echo "Windows sig length: ${#WIN_SIG}"
+            WIN_PLATFORM=$(cat <<WINEOF
+              ,"windows-x86_64": {
+                "signature": "${WIN_SIG}",
+                "url": "${REPO}/releases/download/${TAG}/${NSIS_BASENAME}"
+              }
+          WINEOF
+            )
+          fi
 
           cat > latest.json << EOF
           {
@@ -117,7 +164,7 @@ jobs:
               "darwin-x86_64": {
                 "signature": "${X64_SIG}",
                 "url": "${REPO}/releases/download/${TAG}/Scratch.Pad_x64.app.tar.gz"
-              }
+              }${WIN_PLATFORM}
             }
           }
           EOF
