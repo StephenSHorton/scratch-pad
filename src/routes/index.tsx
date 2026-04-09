@@ -74,10 +74,19 @@ function StickyNote() {
 	// Highlight (emphasis) state — set by AI via MCP, cleared on user click
 	const [highlightPattern, setHighlightPattern] = useState<string | null>(null);
 
+	// Lobby state
+	const [roomCode, setRoomCode] = useState<string | null>(null);
+	const [joinCode, setJoinCode] = useState("");
+	const [peers, setPeers] = useState<{ node_id: string; name: string; addr: string; connected_at: string; last_seen: string }[]>([]);
+	const [lobbyError, setLobbyError] = useState<string | null>(null);
+	const [lobbyLoading, setLobbyLoading] = useState(false);
+	const [lobbyInfo, setLobbyInfo] = useState<{ node_id: string; display_name: string } | null>(null);
+
 	// Detect window type
 	const windowLabel = getCurrentWindow().label;
 	const isRemote = windowLabel.startsWith("remote-");
 	const isLogs = windowLabel === "logs";
+	const isLobby = windowLabel === "lobby";
 	const noteId = isRemote ? windowLabel.replace("remote-", "") : windowLabel;
 
 	// Log viewer: poll for new content every 1.5s
@@ -99,6 +108,32 @@ function StickyNote() {
 		};
 	}, [isLogs]);
 
+	// Lobby: fetch info and poll peers
+	useEffect(() => {
+		if (!isLobby) return;
+		invoke<{ node_id: string; display_name: string; ip: string; port: number; room_code: string }>("get_local_network_info")
+			.then((info) => setLobbyInfo({ node_id: info.node_id, display_name: info.display_name }))
+			.catch(() => {});
+		const fetchPeers = () => {
+			invoke<{ node_id: string; name: string; addr: string; connected_at: string; last_seen: string }[]>("get_peers")
+				.then(setPeers)
+				.catch(() => {});
+		};
+		fetchPeers();
+		const interval = setInterval(fetchPeers, 2000);
+		const unlistenConnect = listen<{ node_id: string; name: string }>("peer-connected", (event) => {
+			fetchPeers();
+		});
+		const unlistenDisconnect = listen<{ node_id: string }>("peer-disconnected", () => {
+			fetchPeers();
+		});
+		return () => {
+			clearInterval(interval);
+			unlistenConnect.then((fn) => fn());
+			unlistenDisconnect.then((fn) => fn());
+		};
+	}, [isLobby]);
+
 	// Listen for highlight events from MCP (local notes only)
 	useEffect(() => {
 		if (isLogs || isRemote) return;
@@ -111,7 +146,7 @@ function StickyNote() {
 	}, [isLogs, isRemote]);
 
 	useEffect(() => {
-		if (isLogs) return; // Skip note fetching for log viewer
+		if (isLogs || isLobby) return; // Skip note fetching for log viewer / lobby
 		if (isRemote) {
 			// Fetch remote note data from Tauri backend
 			invoke<RemoteNote | null>("get_remote_note", { id: noteId }).then(
@@ -303,6 +338,335 @@ function StickyNote() {
 							{line}
 						</div>
 					))}
+				</div>
+			</div>
+		);
+	}
+
+	// Lobby rendering
+	if (isLobby) {
+		const handleHost = async () => {
+			setLobbyError(null);
+			try {
+				const result = await invoke<{ code: string; ip: string; port: number }>("host_room");
+				setRoomCode(result.code);
+			} catch (e) {
+				setLobbyError(String(e));
+			}
+		};
+
+		const handleJoin = async () => {
+			if (!joinCode.trim()) return;
+			setLobbyError(null);
+			setLobbyLoading(true);
+			try {
+				const result = await invoke<{ peer_name: string; peer_id: string }>("join_room", { code: joinCode.trim() });
+				setJoinCode("");
+				setLobbyLoading(false);
+			} catch (e) {
+				setLobbyError(String(e));
+				setLobbyLoading(false);
+			}
+		};
+
+		const handleDisconnect = async (nodeId: string) => {
+			try {
+				await invoke("disconnect_peer", { nodeId });
+			} catch (e) {
+				setLobbyError(String(e));
+			}
+		};
+
+		const handleCopy = () => {
+			if (roomCode) {
+				navigator.clipboard.writeText(roomCode).catch(() => {});
+			}
+		};
+
+		return (
+			<div
+				onMouseDown={handleMouseDown}
+				style={{
+					background: "#1e1e1e",
+					color: "#d4d4d4",
+					borderRadius: "8px",
+					padding: "16px",
+					height: "100vh",
+					display: "flex",
+					flexDirection: "column",
+					boxShadow: "0 4px 24px rgba(0,0,0,0.3), 0 1.5px 6px rgba(0,0,0,0.15)",
+					fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+					cursor: "grab",
+					userSelect: "none",
+					overflow: "hidden",
+					gap: "12px",
+				}}
+			>
+				{/* Header */}
+				<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+					<div>
+						<span style={{ fontSize: "13px", fontWeight: 700, color: "#e0e0e0" }}>Multiplayer</span>
+						{lobbyInfo && (
+							<span style={{ fontSize: "10px", color: "#666", marginLeft: "8px" }}>{lobbyInfo.display_name}</span>
+						)}
+					</div>
+					<button
+						type="button"
+						onClick={() => getCurrentWindow().close()}
+						style={{
+							background: "none",
+							border: "none",
+							color: "#666",
+							fontSize: "16px",
+							cursor: "pointer",
+							padding: "2px 4px",
+							lineHeight: 1,
+						}}
+						onMouseEnter={(e) => (e.currentTarget.style.color = "#d4d4d4")}
+						onMouseLeave={(e) => (e.currentTarget.style.color = "#666")}
+					>
+						{"\u2715"}
+					</button>
+				</div>
+
+				{/* Error banner */}
+				{lobbyError && (
+					<div style={{
+						background: "#3d1f1f",
+						border: "1px solid #5c2e2e",
+						borderRadius: "6px",
+						padding: "8px 10px",
+						fontSize: "11px",
+						color: "#f48771",
+						display: "flex",
+						justifyContent: "space-between",
+						alignItems: "center",
+					}}>
+						<span>{lobbyError}</span>
+						<button
+							type="button"
+							onClick={() => setLobbyError(null)}
+							style={{ background: "none", border: "none", color: "#f48771", cursor: "pointer", fontSize: "12px" }}
+						>
+							{"\u2715"}
+						</button>
+					</div>
+				)}
+
+				{/* Host Room */}
+				<div style={{
+					background: "#252526",
+					borderRadius: "8px",
+					padding: "12px",
+					border: "1px solid #333",
+				}}>
+					<div style={{ fontSize: "11px", fontWeight: 600, color: "#7ec699", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+						Host a Room
+					</div>
+					{roomCode ? (
+						<div>
+							<div style={{
+								fontFamily: "'SF Mono', 'Menlo', 'Consolas', monospace",
+								fontSize: "20px",
+								fontWeight: 700,
+								color: "#e0e0e0",
+								textAlign: "center",
+								padding: "8px 0",
+								letterSpacing: "2px",
+							}}>
+								{roomCode}
+							</div>
+							<div style={{ fontSize: "10px", color: "#666", textAlign: "center", marginBottom: "8px" }}>
+								Share this code with your teammate
+							</div>
+							<div style={{ display: "flex", gap: "6px" }}>
+								<button
+									type="button"
+									onClick={handleCopy}
+									style={{
+										flex: 1,
+										background: "#333",
+										border: "1px solid #444",
+										color: "#d4d4d4",
+										borderRadius: "5px",
+										padding: "6px",
+										fontSize: "11px",
+										cursor: "pointer",
+									}}
+								>
+									Copy Code
+								</button>
+								<button
+									type="button"
+									onClick={() => setRoomCode(null)}
+									style={{
+										flex: 1,
+										background: "none",
+										border: "1px solid #444",
+										color: "#999",
+										borderRadius: "5px",
+										padding: "6px",
+										fontSize: "11px",
+										cursor: "pointer",
+									}}
+								>
+									Hide
+								</button>
+							</div>
+						</div>
+					) : (
+						<button
+							type="button"
+							onClick={handleHost}
+							style={{
+								width: "100%",
+								background: "#2d6a4f",
+								border: "none",
+								color: "#e0e0e0",
+								borderRadius: "5px",
+								padding: "8px",
+								fontSize: "12px",
+								fontWeight: 600,
+								cursor: "pointer",
+							}}
+							onMouseEnter={(e) => (e.currentTarget.style.background = "#3a8463")}
+							onMouseLeave={(e) => (e.currentTarget.style.background = "#2d6a4f")}
+						>
+							Create Room
+						</button>
+					)}
+				</div>
+
+				{/* Join Room */}
+				<div style={{
+					background: "#252526",
+					borderRadius: "8px",
+					padding: "12px",
+					border: "1px solid #333",
+				}}>
+					<div style={{ fontSize: "11px", fontWeight: 600, color: "#569cd6", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+						Join a Room
+					</div>
+					<div style={{ display: "flex", gap: "6px" }}>
+						<input
+							type="text"
+							value={joinCode}
+							onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+							onKeyDown={(e) => { if (e.key === "Enter") handleJoin(); }}
+							placeholder="XXXX-XXXX-XX"
+							style={{
+								flex: 1,
+								background: "#1e1e1e",
+								border: "1px solid #444",
+								color: "#d4d4d4",
+								borderRadius: "5px",
+								padding: "7px 10px",
+								fontSize: "13px",
+								fontFamily: "'SF Mono', 'Menlo', 'Consolas', monospace",
+								letterSpacing: "1px",
+								outline: "none",
+							}}
+							onFocus={(e) => (e.currentTarget.style.borderColor = "#569cd6")}
+							onBlur={(e) => (e.currentTarget.style.borderColor = "#444")}
+						/>
+						<button
+							type="button"
+							onClick={handleJoin}
+							disabled={lobbyLoading || !joinCode.trim()}
+							style={{
+								background: lobbyLoading ? "#333" : "#1a4a7a",
+								border: "none",
+								color: "#e0e0e0",
+								borderRadius: "5px",
+								padding: "7px 14px",
+								fontSize: "12px",
+								fontWeight: 600,
+								cursor: lobbyLoading ? "wait" : "pointer",
+								opacity: !joinCode.trim() ? 0.5 : 1,
+							}}
+							onMouseEnter={(e) => { if (!lobbyLoading && joinCode.trim()) e.currentTarget.style.background = "#245d99"; }}
+							onMouseLeave={(e) => { if (!lobbyLoading) e.currentTarget.style.background = "#1a4a7a"; }}
+						>
+							{lobbyLoading ? "..." : "Join"}
+						</button>
+					</div>
+				</div>
+
+				{/* Connected Peers */}
+				<div style={{
+					flex: 1,
+					background: "#252526",
+					borderRadius: "8px",
+					padding: "12px",
+					border: "1px solid #333",
+					overflowY: "auto",
+				}}>
+					<div style={{ fontSize: "11px", fontWeight: 600, color: "#999", marginBottom: "8px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+						Connected Peers ({peers.length})
+					</div>
+					{peers.length === 0 ? (
+						<div style={{ fontSize: "11px", color: "#555", textAlign: "center", padding: "16px 0" }}>
+							No peers connected
+						</div>
+					) : (
+						<div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+							{peers.map((peer) => (
+								<div
+									key={peer.node_id}
+									style={{
+										display: "flex",
+										alignItems: "center",
+										justifyContent: "space-between",
+										padding: "6px 8px",
+										background: "#1e1e1e",
+										borderRadius: "5px",
+									}}
+								>
+									<div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+										<div style={{
+											width: "8px",
+											height: "8px",
+											borderRadius: "50%",
+											background: senderColor(peer.node_id),
+										}} />
+										<span style={{ fontSize: "12px", color: "#d4d4d4" }}>{peer.name}</span>
+										<span style={{
+											fontSize: "9px",
+											background: "#1a3a1a",
+											color: "#7ec699",
+											padding: "1px 5px",
+											borderRadius: "3px",
+										}}>
+											connected
+										</span>
+									</div>
+									<button
+										type="button"
+										onClick={() => handleDisconnect(peer.node_id)}
+										style={{
+											background: "none",
+											border: "1px solid #444",
+											color: "#999",
+											borderRadius: "4px",
+											padding: "2px 8px",
+											fontSize: "10px",
+											cursor: "pointer",
+										}}
+										onMouseEnter={(e) => {
+											e.currentTarget.style.borderColor = "#f48771";
+											e.currentTarget.style.color = "#f48771";
+										}}
+										onMouseLeave={(e) => {
+											e.currentTarget.style.borderColor = "#444";
+											e.currentTarget.style.color = "#999";
+										}}
+									>
+										Disconnect
+									</button>
+								</div>
+							))}
+						</div>
+					)}
 				</div>
 			</div>
 		);

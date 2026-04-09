@@ -1,8 +1,10 @@
 pub mod discovery;
 pub mod protocol;
+pub mod room;
 pub mod store;
 pub mod transport;
 
+use std::net::Ipv4Addr;
 use std::sync::Arc;
 
 use tauri::AppHandle;
@@ -13,12 +15,14 @@ use store::RemoteNoteStore;
 use transport::TransportHandle;
 
 #[allow(dead_code)]
+#[derive(Clone)]
 pub struct NetworkHandle {
 	store: Arc<RemoteNoteStore>,
 	transport: Arc<TransportHandle>,
 	shutdown: Arc<Notify>,
 	pub node_id: String,
 	pub display_name: String,
+	tcp_port: u16,
 }
 
 impl NetworkHandle {
@@ -42,6 +46,31 @@ impl NetworkHandle {
 	pub fn shutdown(&self) {
 		self.shutdown.notify_waiters();
 		self.transport.shutdown();
+	}
+
+	/// Get the LAN IP and TCP port this instance is listening on.
+	pub fn local_addr(&self) -> Result<(Ipv4Addr, u16), String> {
+		let ip = room::get_lan_ip()?;
+		Ok((ip, self.tcp_port))
+	}
+
+	/// Generate a room code encoding this instance's IP:port for manual peer connection.
+	pub fn host_room(&self) -> Result<String, String> {
+		let (ip, port) = self.local_addr()?;
+		Ok(room::encode_room_code(ip, port))
+	}
+
+	/// Decode a room code and connect to the peer at that address.
+	pub async fn join_room(&self, code: &str) -> Result<(String, String), String> {
+		let (ip, port) = room::decode_room_code(code)?;
+		let addr = format!("{ip}:{port}");
+		crate::log(&format!("[network] Joining room — connecting to {addr}"));
+		self.transport.connect_to_address(&addr).await
+	}
+
+	/// Disconnect from a specific peer.
+	pub async fn disconnect_peer(&self, node_id: &str) -> Result<(), String> {
+		self.transport.disconnect_peer(node_id).await
 	}
 }
 
@@ -68,7 +97,6 @@ pub async fn start_network(_app: AppHandle) -> NetworkHandle {
 		Ok(result) => result,
 		Err(e) => {
 			eprintln!("[network] Failed to start transport: {e}");
-			// Return a handle that just doesn't do networking
 			let (_, transport) = transport::start_transport(
 				node_id.clone(),
 				display_name.clone(),
@@ -76,18 +104,19 @@ pub async fn start_network(_app: AppHandle) -> NetworkHandle {
 			)
 			.await
 			.expect("transport retry failed");
-			// If even retry fails, we still need a handle. Let's just use port 0.
 			return NetworkHandle {
 				store,
 				transport,
 				shutdown,
 				node_id,
 				display_name,
+				tcp_port: 0,
 			};
 		}
 	};
 
-	// Start mDNS discovery
+	// Start mDNS discovery (for service registration — peers can still find us)
+	// but do NOT auto-connect on discovery. Users connect manually via room codes.
 	let mdns_result = discovery::start_discovery(
 		node_id.clone(),
 		display_name.clone(),
@@ -95,20 +124,10 @@ pub async fn start_network(_app: AppHandle) -> NetworkHandle {
 	);
 
 	match mdns_result {
-		Ok((mut peer_rx, _daemon)) => {
-			// Spawn a task to handle discovered peers
-			let connect_transport = transport.clone();
-			tokio::spawn(async move {
-				while let Some(peer) = peer_rx.recv().await {
-					let t = connect_transport.clone();
-					tokio::spawn(async move {
-						transport::connect_to_peer(peer, t).await;
-					});
-				}
-			});
-
-			// We intentionally forget the daemon — it needs to live as long as the app.
-			// The mDNS daemon will be cleaned up when the process exits.
+		Ok((_peer_rx, _daemon)) => {
+			// mDNS stays running for service registration (so others can discover us)
+			// but we no longer auto-connect to discovered peers.
+			// The peer_rx channel is intentionally dropped — no auto-connect loop.
 			std::mem::forget(_daemon);
 		}
 		Err(e) => {
@@ -142,5 +161,6 @@ pub async fn start_network(_app: AppHandle) -> NetworkHandle {
 		shutdown,
 		node_id,
 		display_name,
+		tcp_port,
 	}
 }

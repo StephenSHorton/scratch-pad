@@ -24,8 +24,8 @@ struct Connection {
 }
 
 pub struct TransportHandle {
-	node_id: String,
-	name: String,
+	pub(super) node_id: String,
+	pub(super) name: String,
 	connections: Arc<Mutex<HashMap<String, Connection>>>,
 	store: Arc<RemoteNoteStore>,
 	share_tx: mpsc::UnboundedSender<NoteEnvelope>,
@@ -77,6 +77,91 @@ impl TransportHandle {
 	#[allow(dead_code)]
 	pub fn shutdown(&self) {
 		self.shutdown.notify_waiters();
+	}
+
+	/// One-shot connect to an address (no retry loop). Used for manual room joins.
+	/// Returns the peer's (node_id, display_name) on success.
+	pub async fn connect_to_address(
+		self: &Arc<Self>,
+		addr: &str,
+	) -> Result<(String, String), String> {
+		let connect_timeout = Duration::from_secs(10);
+
+		let mut stream = match timeout(connect_timeout, TcpStream::connect(addr)).await {
+			Ok(Ok(s)) => s,
+			Ok(Err(e)) => return Err(format!("Connection failed: {e}")),
+			Err(_) => return Err("Connection timed out".into()),
+		};
+
+		// Send Hello
+		write_message(
+			&mut stream,
+			&Message::Hello {
+				node_id: self.node_id.clone(),
+				name: self.name.clone(),
+				version: 1,
+			},
+		)
+		.await
+		.map_err(|e| format!("Handshake send failed: {e}"))?;
+
+		// Expect Hello back
+		let hello = match timeout(connect_timeout, read_message(&mut stream)).await {
+			Ok(Ok(msg)) => msg,
+			Ok(Err(e)) => return Err(format!("Handshake read failed: {e}")),
+			Err(_) => return Err("Handshake timed out".into()),
+		};
+
+		let (peer_node_id, peer_name) = match &hello {
+			Message::Hello { node_id, name, .. } => (node_id.clone(), name.clone()),
+			_ => return Err("Expected Hello response".into()),
+		};
+
+		// Don't connect to ourselves
+		if peer_node_id == self.node_id {
+			return Err("Cannot connect to yourself".into());
+		}
+
+		// Check for existing connection
+		{
+			let conns = self.connections.lock().await;
+			if conns.contains_key(&peer_node_id) {
+				return Err(format!("Already connected to {peer_name}"));
+			}
+		}
+
+		// Register peer
+		self.store.upsert_peer(PeerInfo {
+			node_id: peer_node_id.clone(),
+			name: peer_name.clone(),
+			addr: addr.to_string(),
+			connected_at: Utc::now().to_rfc3339(),
+			last_seen: Utc::now().to_rfc3339(),
+		});
+
+		let result_id = peer_node_id.clone();
+		let result_name = peer_name.clone();
+		let handle = self.clone();
+		tokio::spawn(async move {
+			run_connection(stream, peer_node_id, peer_name, handle).await;
+		});
+
+		Ok((result_id, result_name))
+	}
+
+	/// Disconnect a specific peer by node_id.
+	pub async fn disconnect_peer(&self, node_id: &str) -> Result<(), String> {
+		let mut conns = self.connections.lock().await;
+		if conns.remove(node_id).is_none() {
+			return Err(format!("Peer {node_id} not connected"));
+		}
+		drop(conns);
+		// Dropping the Connection closes the writer_tx channel, which causes
+		// the writer task to exit, which triggers cleanup in run_connection.
+		self.store.remove_peer(node_id);
+		self.store.sync_peers_to_disk();
+		crate::log(&format!("[network] Manually disconnected peer {node_id}"));
+		Ok(())
 	}
 }
 

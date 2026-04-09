@@ -213,7 +213,7 @@ impl RemoteNoteStore {
 		}
 	}
 
-	fn sync_peers_to_disk(&self) {
+	pub fn sync_peers_to_disk(&self) {
 		let dir = notes_dir();
 		fs::create_dir_all(&dir).ok();
 

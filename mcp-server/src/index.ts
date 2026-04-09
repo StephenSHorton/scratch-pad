@@ -508,7 +508,7 @@ server.tool(
 
 server.tool(
   "peer_discover",
-  "Find active Scratch Pad instances on the local network. Returns discovered peers.",
+  "List currently connected peers. Use room_host and room_join to connect with peers manually via room codes.",
   {},
   async () => {
     log("peer_discover");
@@ -618,6 +618,139 @@ server.tool(
       ],
     };
   },
+);
+
+// ---------------------------------------------------------------------------
+// Room-based multiplayer
+// ---------------------------------------------------------------------------
+
+server.tool(
+	"room_host",
+	"Host a multiplayer room and get a room code to share with a teammate. The code encodes your local IP and port — share it out-of-band (verbally, chat, etc.).",
+	{},
+	async () => {
+		log("room_host");
+
+		// Remove stale result file before sending signal
+		const resultFile = path.join(notesDir(), "room-code.json");
+		if (fs.existsSync(resultFile)) fs.unlinkSync(resultFile);
+
+		writeSignalFile(".host-room");
+		const maxWait = 5000;
+		const pollInterval = 200;
+		let waited = 0;
+
+		while (waited < maxWait) {
+			await new Promise((r) => setTimeout(r, pollInterval));
+			waited += pollInterval;
+			if (fs.existsSync(resultFile)) {
+				try {
+					const result = JSON.parse(fs.readFileSync(resultFile, "utf-8"));
+					fs.unlinkSync(resultFile);
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Room hosted! Share this code with your teammate:\n\n**${result.code}**\n\nListening on ${result.ip}:${result.port}`,
+							},
+						],
+					};
+				} catch {
+					break;
+				}
+			}
+		}
+
+		return {
+			content: [
+				{
+					type: "text" as const,
+					text: "Failed to host room — Scratch Pad app may not be running.",
+				},
+			],
+		};
+	},
+);
+
+server.tool(
+	"room_join",
+	"Join a multiplayer room using a room code from a teammate. Connects to their Scratch Pad instance for real-time note sharing.",
+	{
+		code: z.string().describe("The room code from the host (e.g., XXXX-XXXX-XX)"),
+	},
+	async ({ code }) => {
+		log(`room_join: ${code}`);
+		writeSignalFile(".join-room", { code });
+
+		// Poll for the result file
+		const resultFile = path.join(notesDir(), "room-result.json");
+		// Remove stale result file first
+		if (fs.existsSync(resultFile)) fs.unlinkSync(resultFile);
+
+		const maxWait = 15000;
+		const pollInterval = 300;
+		let waited = 0;
+
+		while (waited < maxWait) {
+			await new Promise((r) => setTimeout(r, pollInterval));
+			waited += pollInterval;
+			if (fs.existsSync(resultFile)) {
+				try {
+					const result = JSON.parse(fs.readFileSync(resultFile, "utf-8"));
+					fs.unlinkSync(resultFile);
+					if (result.success) {
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: `Connected to **${result.peer_name}** (${result.peer_id}). You can now share notes with scope "team".`,
+								},
+							],
+						};
+					}
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `Failed to join room: ${result.error}`,
+							},
+						],
+					};
+				} catch {
+					break;
+				}
+			}
+		}
+
+		return {
+			content: [
+				{
+					type: "text" as const,
+					text: "Join timed out — check that the host is running Scratch Pad and the code is correct.",
+				},
+			],
+		};
+	},
+);
+
+server.tool(
+	"peer_disconnect",
+	"Disconnect from a specific peer.",
+	{
+		node_id: z.string().describe("The node ID of the peer to disconnect (from peer_discover or peer_list)"),
+	},
+	async ({ node_id }) => {
+		log(`peer_disconnect: ${node_id}`);
+		writeSignalFile(".disconnect-peer", { nodeId: node_id });
+		return {
+			content: [
+				{
+					type: "text" as const,
+					text: `Disconnecting from peer ${node_id}.`,
+				},
+			],
+		};
+	},
 );
 
 // ---------------------------------------------------------------------------

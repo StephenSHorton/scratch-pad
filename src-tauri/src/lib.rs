@@ -346,6 +346,75 @@ async fn retract_note(
     Ok(())
 }
 
+#[derive(serde::Serialize)]
+struct HostRoomResult {
+    code: String,
+    ip: String,
+    port: u16,
+}
+
+#[tauri::command]
+async fn host_room(
+    network: tauri::State<'_, network::NetworkHandle>,
+) -> Result<HostRoomResult, String> {
+    let (ip, port) = network.local_addr()?;
+    let code = network.host_room()?;
+    log(&format!("[network] Hosting room: {code} ({ip}:{port})"));
+    Ok(HostRoomResult {
+        code,
+        ip: ip.to_string(),
+        port,
+    })
+}
+
+#[derive(serde::Serialize)]
+struct JoinRoomResult {
+    peer_name: String,
+    peer_id: String,
+}
+
+#[tauri::command]
+async fn join_room(
+    code: String,
+    network: tauri::State<'_, network::NetworkHandle>,
+) -> Result<JoinRoomResult, String> {
+    let (peer_id, peer_name) = network.join_room(&code).await?;
+    log(&format!("[network] Joined room — connected to {peer_name} ({peer_id})"));
+    Ok(JoinRoomResult { peer_name, peer_id })
+}
+
+#[tauri::command]
+async fn disconnect_peer(
+    node_id: String,
+    network: tauri::State<'_, network::NetworkHandle>,
+) -> Result<(), String> {
+    network.disconnect_peer(&node_id).await
+}
+
+#[derive(serde::Serialize)]
+struct LocalNetworkInfo {
+    node_id: String,
+    display_name: String,
+    ip: String,
+    port: u16,
+    room_code: String,
+}
+
+#[tauri::command]
+async fn get_local_network_info(
+    network: tauri::State<'_, network::NetworkHandle>,
+) -> Result<LocalNetworkInfo, String> {
+    let (ip, port) = network.local_addr()?;
+    let room_code = network.host_room()?;
+    Ok(LocalNetworkInfo {
+        node_id: network.node_id.clone(),
+        display_name: network.display_name.clone(),
+        ip: ip.to_string(),
+        port,
+        room_code,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Window management
 // ---------------------------------------------------------------------------
@@ -652,7 +721,11 @@ pub fn run() {
             get_remote_notes,
             get_remote_note,
             share_note,
-            retract_note
+            retract_note,
+            host_room,
+            join_room,
+            disconnect_peer,
+            get_local_network_info
         ])
         .setup(|app| {
             // Build the macOS menu bar
@@ -683,6 +756,8 @@ pub fn run() {
                 &[
                     &MenuItem::with_id(app, "new_pad", "New Pad", true, Some("CmdOrCtrl+N"))?,
                     &MenuItem::with_id(app, "organize", "Organize Pads", true, Some("CmdOrCtrl+Shift+O"))?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &MenuItem::with_id(app, "lobby", "Multiplayer...", true, Some("CmdOrCtrl+Shift+M"))?,
                     &PredefinedMenuItem::separator(app)?,
                     &MenuItem::with_id(app, "clear_all", "Clear All Pads", true, None::<&str>)?,
                 ],
@@ -754,6 +829,25 @@ pub fn run() {
                                 .ok();
                         }
                     }
+                    "lobby" | "tray_lobby" => {
+                        if let Some(window) = handle.get_webview_window("lobby") {
+                            window.set_focus().ok();
+                        } else {
+                            let always_on_top = handle
+                                .try_state::<SettingsState>()
+                                .and_then(|s| s.settings.lock().ok().map(|s| s.always_on_top))
+                                .unwrap_or(false);
+                            WebviewWindowBuilder::new(&handle, "lobby", WebviewUrl::default())
+                                .title("Multiplayer")
+                                .decorations(false)
+                                .transparent(true)
+                                .always_on_top(always_on_top)
+                                .inner_size(400.0, 500.0)
+                                .center()
+                                .build()
+                                .ok();
+                        }
+                    }
                     "always_on_top" => {
                         let on_top = {
                             let settings_state = handle.state::<SettingsState>();
@@ -788,6 +882,8 @@ pub fn run() {
                 &[
                     &MenuItem::with_id(app, "tray_new_pad", "New Pad", true, None::<&str>)?,
                     &MenuItem::with_id(app, "tray_organize", "Organize Pads", true, None::<&str>)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &MenuItem::with_id(app, "tray_lobby", "Multiplayer...", true, None::<&str>)?,
                     &PredefinedMenuItem::separator(app)?,
                     &MenuItem::with_id(app, "tray_quit", "Quit Scratch Pad", true, None::<&str>)?,
                 ],
@@ -910,6 +1006,118 @@ pub fn run() {
                                         fs::remove_file(&close_logs_signal).ok();
                                         if let Some(window) = handle.get_webview_window("logs") {
                                             window.close().ok();
+                                        }
+                                        return;
+                                    }
+
+                                    // Check for open-lobby signal from MCP
+                                    let open_lobby_signal = notes_dir().join(".open-lobby");
+                                    if open_lobby_signal.exists() {
+                                        fs::remove_file(&open_lobby_signal).ok();
+                                        if let Some(window) = handle.get_webview_window("lobby") {
+                                            window.set_focus().ok();
+                                        } else {
+                                            let always_on_top = handle
+                                                .try_state::<SettingsState>()
+                                                .and_then(|s| s.settings.lock().ok().map(|s| s.always_on_top))
+                                                .unwrap_or(false);
+                                            WebviewWindowBuilder::new(&handle, "lobby", WebviewUrl::default())
+                                                .title("Multiplayer")
+                                                .decorations(false)
+                                                .transparent(true)
+                                                .always_on_top(always_on_top)
+                                                .inner_size(400.0, 500.0)
+                                                .center()
+                                                .build()
+                                                .ok();
+                                        }
+                                        return;
+                                    }
+
+                                    // Check for join-room signal from MCP
+                                    let join_room_signal = notes_dir().join(".join-room");
+                                    if join_room_signal.exists() {
+                                        if let Ok(content) = fs::read_to_string(&join_room_signal) {
+                                            fs::remove_file(&join_room_signal).ok();
+                                            if let Ok(data) = serde_json::from_str::<serde_json::Value>(&content) {
+                                                if let Some(code) = data.get("code").and_then(|v| v.as_str()) {
+                                                    let code = code.to_string();
+                                                    let network = handle.state::<network::NetworkHandle>();
+                                                    let network = network.inner().clone();
+                                                    let h = handle.clone();
+                                                    tauri::async_runtime::spawn(async move {
+                                                        match network.join_room(&code).await {
+                                                            Ok((peer_id, peer_name)) => {
+                                                                crate::log(&format!("[network] MCP joined room — connected to {peer_name} ({peer_id})"));
+                                                                // Write result for MCP to read
+                                                                let result = serde_json::json!({
+                                                                    "success": true,
+                                                                    "peer_name": peer_name,
+                                                                    "peer_id": peer_id,
+                                                                });
+                                                                let result_file = notes_dir().join("room-result.json");
+                                                                fs::write(&result_file, serde_json::to_string_pretty(&result).unwrap()).ok();
+                                                                h.emit("peer-connected", serde_json::json!({"node_id": peer_id, "name": peer_name})).ok();
+                                                            }
+                                                            Err(e) => {
+                                                                crate::log(&format!("[network] MCP join room failed: {e}"));
+                                                                let result = serde_json::json!({
+                                                                    "success": false,
+                                                                    "error": e,
+                                                                });
+                                                                let result_file = notes_dir().join("room-result.json");
+                                                                fs::write(&result_file, serde_json::to_string_pretty(&result).unwrap()).ok();
+                                                            }
+                                                        }
+                                                    });
+                                                }
+                                            }
+                                        }
+                                        return;
+                                    }
+
+                                    // Check for host-room signal from MCP
+                                    let host_room_signal = notes_dir().join(".host-room");
+                                    if host_room_signal.exists() {
+                                        fs::remove_file(&host_room_signal).ok();
+                                        let network = handle.state::<network::NetworkHandle>();
+                                        match network.host_room() {
+                                            Ok(code) => {
+                                                let (ip, port) = network.local_addr().unwrap_or((std::net::Ipv4Addr::UNSPECIFIED, 0));
+                                                let result = serde_json::json!({
+                                                    "code": code,
+                                                    "ip": ip.to_string(),
+                                                    "port": port,
+                                                });
+                                                let result_file = notes_dir().join("room-code.json");
+                                                fs::write(&result_file, serde_json::to_string_pretty(&result).unwrap()).ok();
+                                                crate::log(&format!("[network] MCP hosted room: {code}"));
+                                            }
+                                            Err(e) => {
+                                                crate::log(&format!("[network] MCP host room failed: {e}"));
+                                            }
+                                        }
+                                        return;
+                                    }
+
+                                    // Check for disconnect-peer signal from MCP
+                                    let disconnect_signal = notes_dir().join(".disconnect-peer");
+                                    if disconnect_signal.exists() {
+                                        if let Ok(content) = fs::read_to_string(&disconnect_signal) {
+                                            fs::remove_file(&disconnect_signal).ok();
+                                            if let Ok(data) = serde_json::from_str::<serde_json::Value>(&content) {
+                                                if let Some(node_id) = data.get("nodeId").and_then(|v| v.as_str()) {
+                                                    let node_id = node_id.to_string();
+                                                    let network = handle.state::<network::NetworkHandle>();
+                                                    let network = network.inner().clone();
+                                                    let h = handle.clone();
+                                                    tauri::async_runtime::spawn(async move {
+                                                        if let Ok(()) = network.disconnect_peer(&node_id).await {
+                                                            h.emit("peer-disconnected", serde_json::json!({"node_id": node_id})).ok();
+                                                        }
+                                                    });
+                                                }
+                                            }
                                         }
                                         return;
                                     }
