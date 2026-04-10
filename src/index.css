@@ -235,7 +235,7 @@
    the first block in the document. */
 .note-title-block {
 	padding: 3px 12px;
-	margin-left: -4px;
+	margin-left: 14px;
 	margin-right: 50px;
 	border-radius: 6px;
 	transition: background-color 0.12s ease;
@@ -393,6 +393,8 @@
 	overflow-x: auto;
 	white-space: pre;
 	tab-size: 2;
+	max-width: 100%;
+	box-sizing: border-box;
 }
 
 /* Highlight decoration applied via JS to top-level block DOM nodes */
