@@ -1,3 +1,4 @@
+import { listen } from "@tauri-apps/api/event";
 import { wordCount } from "./batcher";
 import type { TranscriptChunk } from "./schemas";
 
@@ -83,5 +84,78 @@ export async function* feedTranscriptBatches(
 
 	if (buf.length > 0 && !opts.signal.cancelled) {
 		yield { chunks: buf, wordCount: words };
+	}
+}
+
+export interface LiveStreamOptions {
+	sizeThresholdWords: number;
+	timeThresholdMs: number;
+	/** Optional ceiling — flush a batch once this many chunks accumulate, even
+	 * if neither word nor time threshold has fired. Protects against sparse /
+	 * quiet speech where individual chunks contribute few words and timestamps
+	 * may not advance steadily. */
+	chunkCountThreshold?: number;
+	signal: FeederSignal;
+	/** Fires once per chunk as it arrives — useful for live captions. */
+	onChunk?: (chunk: TranscriptChunk) => void;
+}
+
+/**
+ * Consumes Tauri `transcript-chunk` events and yields batches when the
+ * accumulated chunks cross the size or time threshold. Same shape as
+ * `feedTranscriptBatches` so the meeting consumer code is identical
+ * across demo and live modes.
+ */
+export async function* consumeLiveStream(
+	opts: LiveStreamOptions,
+): AsyncGenerator<Batch> {
+	const queue: TranscriptChunk[] = [];
+	let resolveNext: (() => void) | null = null;
+
+	const unlisten = await listen<TranscriptChunk>(
+		"transcript-chunk",
+		(event) => {
+			queue.push(event.payload);
+			opts.onChunk?.(event.payload);
+			if (resolveNext) {
+				resolveNext();
+				resolveNext = null;
+			}
+		},
+	);
+
+	try {
+		let buf: TranscriptChunk[] = [];
+		let words = 0;
+		let bufStartMs = 0;
+
+		while (!opts.signal.cancelled) {
+			while (queue.length === 0 && !opts.signal.cancelled) {
+				await new Promise<void>((r) => {
+					resolveNext = r;
+				});
+			}
+			if (opts.signal.cancelled) return;
+
+			const chunk = queue.shift();
+			if (!chunk) continue;
+			if (buf.length === 0) bufStartMs = chunk.startMs;
+			buf.push(chunk);
+			words += wordCount(chunk.text);
+
+			const elapsed = chunk.endMs - bufStartMs;
+			const sizeMet = words >= opts.sizeThresholdWords;
+			const timeMet = elapsed >= opts.timeThresholdMs;
+			const countMet =
+				opts.chunkCountThreshold !== undefined &&
+				buf.length >= opts.chunkCountThreshold;
+			if (sizeMet || timeMet || countMet) {
+				yield { chunks: buf, wordCount: words };
+				buf = [];
+				words = 0;
+			}
+		}
+	} finally {
+		unlisten();
 	}
 }

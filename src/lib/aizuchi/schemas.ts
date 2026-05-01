@@ -79,16 +79,80 @@ export const NodeMerge = z.object({
 });
 export type NodeMerge = z.infer<typeof NodeMerge>;
 
+export const ThoughtIntent = z.enum([
+	"question",
+	"observation",
+	"unresolved",
+	"pattern",
+	"fyi",
+]);
+export type ThoughtIntent = z.infer<typeof ThoughtIntent>;
+
+export const AIThought = z.object({
+	id: z
+		.string()
+		.describe(
+			"Stable identifier — reuse the same id across passes when updating an existing thought. snake_case slug.",
+		),
+	text: z
+		.string()
+		.describe("One short sentence — the observation, question, or note."),
+	intent: ThoughtIntent.describe(
+		"How this thought should be surfaced to the user. 'unresolved' / 'question' draw attention; 'observation' / 'pattern' / 'fyi' are quieter.",
+	),
+	references: z
+		.array(z.string())
+		.optional()
+		.describe(
+			"Optional node ids this thought relates to — clicking these in the UI jumps to the node.",
+		),
+});
+export type AIThought = z.infer<typeof AIThought>;
+
+/** UI-side enrichment — added by the consumer, not the model. */
+export interface AIThoughtRecord extends AIThought {
+	createdAt: number;
+	updatedAt: number;
+}
+
+/**
+ * One pass of the graph-mutation loop. Used by the meeting transcript UI
+ * to interleave AI thoughts with the chunks that prompted them — gives the
+ * user a temporal sense of "what the AI was thinking when."
+ */
+export interface PassRecord {
+	id: string;
+	batchIdx: number;
+	/** Last chunk index (0-based) included in the batch this pass processed. */
+	atChunkIdx: number;
+	/** New or updated thoughts emitted by this pass. */
+	thoughts: AIThought[];
+	timestamp: number;
+}
+
 export const GraphDiff = z.object({
 	no_changes: z
 		.boolean()
 		.describe(
-			"True when the new transcript chunk contains no information worth adding or modifying in the graph. When true, all other arrays must be empty.",
+			"True when this pass produces no graph or notes changes. When true, all other arrays must be empty.",
 		),
 	add_nodes: z.array(Node),
 	add_edges: z.array(Edge),
 	update_nodes: z.array(NodeUpdate),
 	merge_nodes: z.array(NodeMerge),
+	remove_nodes: z
+		.array(z.string())
+		.describe(
+			"Node ids to drop entirely. Use when reclassifying or removing a misextraction. Edges touching removed nodes are dropped automatically.",
+		),
+	remove_edges: z
+		.array(z.string())
+		.describe("Edge ids to drop. Use when an earlier relation no longer holds."),
+	notes: z
+		.array(AIThought)
+		.describe(
+			"Running observations about the meeting — questions, unresolved threads, patterns. Each thought has a stable id; emit the same id again to update an existing thought, or omit a previous id to drop it.",
+		),
 });
 export type GraphDiff = z.infer<typeof GraphDiff>;
 
@@ -103,12 +167,14 @@ export function emptyGraph(): Graph {
 	return { nodes: [], edges: [] };
 }
 
+/** Apply a diff to a graph. Returns the new graph. */
 export function applyDiff(graph: Graph, diff: GraphDiff): Graph {
 	if (diff.no_changes) return graph;
 
 	const nodes = new Map(graph.nodes.map((n) => [n.id, n]));
 	const edges = new Map(graph.edges.map((e) => [e.id, e]));
 
+	// 1. Merges first (rewire edges, drop absorbed)
 	for (const m of diff.merge_nodes) {
 		const absorbed = new Set(m.absorb);
 		for (const id of absorbed) nodes.delete(id);
@@ -120,12 +186,24 @@ export function applyDiff(graph: Graph, diff: GraphDiff): Graph {
 		}
 	}
 
-	// Drop self-loops produced by merges (e.g. "tim mentions travis" becomes
-	// "travis mentions travis" after a tim→travis merge).
+	// 2. Self-loops cleanup post-merge
 	for (const [eid, e] of edges) {
 		if (e.from === e.to) edges.delete(eid);
 	}
 
+	// 3. Explicit removes
+	for (const id of diff.remove_nodes) {
+		nodes.delete(id);
+	}
+	for (const id of diff.remove_edges) {
+		edges.delete(id);
+	}
+	// 4. Drop edges left dangling by node removes
+	for (const [eid, e] of edges) {
+		if (!nodes.has(e.from) || !nodes.has(e.to)) edges.delete(eid);
+	}
+
+	// 5. Updates
 	for (const u of diff.update_nodes) {
 		const existing = nodes.get(u.id);
 		if (!existing) continue;
@@ -137,14 +215,41 @@ export function applyDiff(graph: Graph, diff: GraphDiff): Graph {
 		});
 	}
 
+	// 6. Adds
 	for (const n of diff.add_nodes) {
 		if (!nodes.has(n.id)) nodes.set(n.id, n);
 	}
-
 	for (const e of diff.add_edges) {
 		if (!nodes.has(e.from) || !nodes.has(e.to)) continue;
 		if (!edges.has(e.id)) edges.set(e.id, e);
 	}
 
 	return { nodes: [...nodes.values()], edges: [...edges.values()] };
+}
+
+/**
+ * Merges thoughts from a diff into the existing UI-side thought list.
+ * Same-id thought is replaced (text/intent/references can change), bumps
+ * `updatedAt`. Thoughts not present in the diff are KEPT — the model only
+ * needs to emit changed/new thoughts. Returns the new list.
+ *
+ * To explicitly drop a thought, the model emits a `remove_*` style isn't
+ * used here; instead, the consumer can prune by age or by absent-from-N-
+ * passes if needed. For prototype: cumulative + de-duplicated by id.
+ */
+export function mergeThoughts(
+	existing: AIThoughtRecord[],
+	incoming: AIThought[],
+	now: number,
+): AIThoughtRecord[] {
+	const byId = new Map(existing.map((t) => [t.id, t]));
+	for (const t of incoming) {
+		const prev = byId.get(t.id);
+		byId.set(t.id, {
+			...t,
+			createdAt: prev?.createdAt ?? now,
+			updatedAt: now,
+		});
+	}
+	return [...byId.values()].sort((a, b) => b.updatedAt - a.updatedAt);
 }

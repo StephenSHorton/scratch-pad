@@ -3,6 +3,7 @@ import { normalizeDiff, type NormalizeReport } from "./normalize";
 import { buildUserPrompt, SYSTEM_PROMPT } from "./prompts";
 import { getProvider, type ProviderName } from "./providers";
 import {
+	type AIThought,
 	type Graph,
 	type GraphDiff,
 	GraphDiff as GraphDiffSchema,
@@ -10,6 +11,8 @@ import {
 
 export interface MutateOptions {
 	provider?: ProviderName;
+	previousThoughts?: AIThought[];
+	recentTranscript?: string;
 }
 
 export interface MutateResult {
@@ -39,9 +42,11 @@ export async function mutateGraph(
 		system: SYSTEM_PROMPT,
 		prompt: buildUserPrompt({
 			currentGraphJson: JSON.stringify(currentGraph, null, 2),
+			previousThoughts: opts.previousThoughts ?? [],
+			recentTranscript: opts.recentTranscript ?? "",
 			chunkText,
 		}),
-		temperature: 0.1,
+		temperature: 0.2,
 	});
 
 	const latencyMs = performance.now() - start;

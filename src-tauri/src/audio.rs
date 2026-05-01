@@ -333,11 +333,12 @@ pub fn transcribe_file(
 // Streaming live capture (Slice C)
 // ---------------------------------------------------------------------------
 
-/// Sliding-window parameters. With 5s window + 4s advance, windows overlap
-/// by 1s — gives whisper enough context to handle word boundaries without
-/// missing utterances that straddle a window edge.
-const STREAM_WINDOW_SECS: u32 = 5;
-const STREAM_ADVANCE_SECS: u32 = 4;
+/// Sliding-window parameters. 3s window + 2s advance = 1s overlap. Smaller
+/// windows hurt whisper accuracy below ~2s (silence-induced hallucination),
+/// so 3s is the lower bound for "feels live" without quality loss. New
+/// transcript appears every 2s.
+const STREAM_WINDOW_SECS: u32 = 3;
+const STREAM_ADVANCE_SECS: u32 = 2;
 
 /// Handle returned to a caller that started a streaming capture. Drop or
 /// `stop()` to end the session — the threads watch the stop flag and exit

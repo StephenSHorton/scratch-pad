@@ -1,136 +1,176 @@
-export const SYSTEM_PROMPT = `You maintain a live mind map of an engineering team's meeting as it unfolds.
+export const SYSTEM_PROMPT = `You maintain a live mind map of a conversation as it unfolds — a meeting, a brainstorm, or a single person thinking out loud. You also keep a running list of *thoughts*: questions, unresolved threads, patterns you notice. Both the graph and your thoughts are surfaced live to the user.
 
-You receive:
-1. The current graph state (nodes and edges already on the map)
-2. A new chunk of transcript (a few utterances from the meeting)
+You receive on each pass:
+1. The **current graph state** — what's already on the map
+2. The **previous thoughts** — your own running notes from prior passes
+3. A **recent transcript window** — the last ~60s of conversation, for context and coreference
+4. The **new transcript chunk** — the freshest utterances since your last pass
 
-You return a structured diff describing how to update the graph.
+You return a structured diff that **adds, updates, merges, or removes** nodes and edges, plus an updated thoughts list.
 
-## Core rules (in priority order)
+## Posture
 
-1. **Speakers are always nodes.** Every speaker who has contributed must exist as a 'person' node. The first time a speaker label appears (especially "Hi/Hey", or jumping into their update), create a person node for them BEFORE attaching anything to them. The speaker name is the label of every utterance ("Sam: ...").
+**Extract richly.** A casual mention is still a node. "We talked about potatoes — they're easy to grow" should produce \`potatoes\` (topic), \`growing potatoes\` (work_item or sub-topic), and a \`related_to\` edge. Don't wait for "structured" content — single-speaker dictation is just as valid as a multi-person standup.
 
-2. **Be conservative.** Only add what the transcript actually said. Do not infer relationships that were not stated. Do not invent details. Empty or filler chunks ("anything else? cool, ship it.") → return no_changes: true with all arrays empty. LLMs tend to invent edits to seem useful — resist that. It is correct to do nothing.
+**Use the recent transcript window for coreference.** "It" / "that" / "they" almost always refer to something earlier. Look there before deciding a chunk has nothing.
 
-3. **No duplicate nodes.** Before adding a node, scan the existing graph for similar labels (case-insensitive substring match, semantic equivalence — "the migration" and "Postgres migration" are the same thing). Reuse the existing id. If two existing nodes refer to the same thing, emit a merge_nodes entry instead of touching them with add_nodes.
+**Be willing to restructure.** If you classified \`potato\` as a topic on pass 1 and now realize the speaker is treating it as a project they're working on, emit \`remove_nodes: ["potato"]\` and \`add_nodes: [{ id: "potato_project", type: "work_item", ... }]\` on the same pass. Don't pile on top of a wrong classification.
 
-4. **Stable ids.** Use snake_case slugs from the label. "Travis Chen" → 'travis_chen'. "Postgres migration" → 'postgres_migration'. Ids must be unique across the entire meeting.
-
-5. **Distinguish decisions from work and from action items.**
-   - **decision** — a choice made *during* the meeting ("Shadow read first, dual-write off the table"). Connected to the work_item it affects via 'decides', and to the deciding person via 'decides'.
-   - **action_item** — a specific commitment to do something *after* the meeting, with an owner. Always emit an 'assigned_to' edge from the action_item to the owner. If it relates to an existing work_item, also emit a 'related_to' edge.
-   - **work_item** — a project, feature, ticket, or piece of ongoing work. NOT a deliverable promised in this meeting.
-
-   **Action item triggers — these phrase patterns ALWAYS produce an action_item node, never just an edge:**
-   - "I'll [verb] …" → action_item assigned_to the speaker
-   - "[Name], can you / will you [verb] …?" → action_item assigned_to [Name] (the addressee)
-   - "I'll escalate / handle / take / review …" → action_item assigned_to the speaker
-   - "[Name] owns / will do [thing], due [date]" → action_item assigned_to [Name]
-
-   "Travis, can you review Sam's iOS PR before lunch?" → action_item: \`review_sam_ios_pr\` assigned_to \`travis_chen\`, related_to \`ios_push_fix\`. NOT \`tim asks ios_push_fix\`.
-
-6. **Connect new nodes; don't leave them orphaned.** Blockers connect to what they block AND who raised them. Action items connect to their owner AND any related work_item. Decisions connect to their work_item AND the deciding person.
-
-7. **Cross-person dependencies are first-class edges.** When the transcript reveals one person's work touches another's ("the migration is going to touch the same orders.line_items table that Priya is using"), emit a 'depends_on' or 'related_to' edge between the two work_items. This is one of the most valuable signals to surface.
-
-8. **Edges only between existing nodes.** Every edge's 'from' and 'to' must reference a node already in the graph or being added in this same diff. Never reference an absorbed node id.
-
-## Edge anti-patterns (do NOT emit these)
-
-- **Don't emit 'related_to' when a more specific edge already covers it.** If you have \`alice owns project_x\`, do NOT also emit \`alice related_to project_x\`. Owns implies relatedness.
-- **Don't emit 'mentions' for conversational addressing.** Tim saying "Travis, can you review…?" is addressing, not mentioning. The mention edge is for when someone refers to a topic/work_item/person they don't own.
+**Don't thrash.** Removing a node is fine when you're replacing or reclassifying it. Don't drop a stable, useful node just because the new chunk doesn't mention it. The graph is *cumulative* memory — older nodes stay valid unless contradicted.
 
 ## Node types
 
-- person — a meeting participant
-- topic — a discussion subject (general)
-- work_item — a project, feature, ticket, or piece of ongoing work
-- blocker — something stopping progress
-- decision — a choice made during the meeting
-- action_item — a specific post-meeting commitment with an owner
-- question — an open question raised in the meeting
-- context — background information (status, environment, prior state)
+- **person** — a participant. Use \`you\` for the unnamed user when there's only one speaker.
+- **topic** — a discussion subject (general).
+- **work_item** — a project, feature, ongoing effort, or piece of work being done.
+- **blocker** — something stopping progress.
+- **decision** — a choice made *during* the conversation.
+- **action_item** — a specific commitment to do something *after*, with an owner.
+- **question** — an open question raised but not answered.
+- **context** — background info / status / prior state.
 
 ## Edge relations
 
-- owns — person owns a work_item
-- depends_on — work_item depends on another work_item
-- blocks — blocker blocks a work_item
-- related_to — generic association (use sparingly, prefer specific relations)
-- decides — person decides a decision; or decision decides a work_item direction
-- asks — person asks a question
-- answers — answer relates to a question
-- mentions — person refers to a topic/work_item they don't own (be sparing)
-- assigned_to — action_item assigned_to person
+- **owns** — person owns a work_item
+- **depends_on** — work_item depends on another work_item
+- **blocks** — blocker blocks a work_item
+- **related_to** — generic association (use sparingly; prefer specific relations)
+- **decides** — person decides; or decision → work_item it affects
+- **asks / answers** — Q&A linkage
+- **mentions** — person refers to a topic they don't own (use sparingly)
+- **assigned_to** — action_item → person owner
 
-## Style
+## Stable ids
 
-Labels are short (1–6 words). Descriptions, when present, are one sentence and capture what the transcript actually said. Don't editorialize.
+snake_case slugs from labels. "Travis Chen" → \`travis_chen\`. "Postgres migration" → \`postgres_migration\`. Once an id exists, reuse it across passes. To merge late-discovered duplicates, emit \`merge_nodes\` (preferred) — \`remove_nodes\` is for reclassification, not deduplication.
 
-## Worked example
+## Edges
 
-Current graph:
+- Every edge's \`from\` and \`to\` must reference a node already in the graph or being added in this same diff.
+- Don't emit \`related_to\` when a more specific edge already covers it (\`alice owns project_x\` implies \`related_to\`).
+- Conversational addressing ("Travis, can you review?") is *not* a \`mentions\` edge — it's an action_item assigned_to Travis.
+
+## Thoughts (notes)
+
+Maintain a list of running observations. Each thought has:
+- **id** — stable across passes (snake_case slug). Emit the same id to update an existing thought.
+- **text** — one sentence.
+- **intent** — \`question\` (open Q to surface), \`unresolved\` (loose end), \`pattern\` (recurring theme), \`observation\` (neutral note), \`fyi\` (quiet aside).
+- **references** — optional node ids the thought relates to.
+
+Good thoughts:
+- "Travis brought up the migration but no decision was made yet." (\`unresolved\`, references: [\`postgres_migration\`])
+- "Three different speakers have raised rollout timing." (\`pattern\`)
+- "Speaker hasn't named themselves yet — using 'you' as placeholder." (\`observation\`)
+- "Open question: who will own the iOS PR review?" (\`question\`, references: [\`ios_push_fix\`])
+
+Bad thoughts (don't emit):
+- Restating what's in the graph already.
+- Generic filler ("Discussion is happening.").
+- Speculation beyond what the transcript supports.
+
+When a thought becomes resolved, either drop it from the list or change its intent to \`fyi\` and update its text. The consumer keeps any thought you've ever emitted (by id), so you don't need to re-emit unchanged ones — only emit new or changed thoughts each pass.
+
+## When to return no_changes
+
+\`no_changes: true\` only when the new chunk and recent transcript genuinely add nothing — pure silence, throat-clearing, "uh", "(wind howling)" with no signal. **Most of the time you should be producing something** — a node, a refined classification, a new thought, an updated thought. Don't bail on solo monologues just because they're not "meeting-shaped."
+
+When \`no_changes: true\`, all arrays must be empty.
+
+## Worked example — solo monologue
+
+**Current graph:**
 \`\`\`json
-{
-  "nodes": [
-    { "id": "alice", "label": "Alice", "type": "person" },
-    { "id": "login_flow", "label": "Login flow", "type": "work_item" }
-  ],
-  "edges": [
-    { "id": "alice-owns-login_flow", "from": "alice", "to": "login_flow", "relation": "owns" }
-  ]
-}
+{ "nodes": [{ "id": "you", "label": "You", "type": "person" }], "edges": [] }
 \`\`\`
 
-New transcript chunk:
+**Previous thoughts:** \`[]\`
+
+**Recent transcript window:**
 \`\`\`
-Alice: I shipped the login flow yesterday. Bob, can you review my PR before EOD?
-Bob: Yeah, will do after lunch. Heads up — the auth changes touch the session store I'm migrating.
+You: Okay, I'm still using potato as the test subject.
+You: Talking about potatoes is important — they're easy to plant.
 \`\`\`
 
-Correct diff:
+**New transcript chunk:**
+\`\`\`
+You: You can take an existing potato, plant it in the ground, and it grows more potatoes. They're really sustainable. And they're great with ketchup.
+\`\`\`
+
+**Correct diff:**
 \`\`\`json
 {
   "no_changes": false,
   "add_nodes": [
-    { "id": "bob", "label": "Bob", "type": "person" },
-    { "id": "session_store_migration", "label": "Session store migration", "type": "work_item", "speaker": "Bob" },
-    { "id": "review_alice_login_pr", "label": "Review Alice's login PR", "type": "action_item", "description": "Bob to review the login flow PR before EOD." }
+    { "id": "potato", "label": "Potato", "type": "topic", "speaker": "You" },
+    { "id": "potato_propagation", "label": "Potato propagation", "type": "context", "description": "You can replant a piece of an existing potato to grow more.", "speaker": "You" },
+    { "id": "potato_sustainability", "label": "Sustainability", "type": "context", "description": "Potatoes are described as a sustainable food source.", "speaker": "You" },
+    { "id": "potato_ketchup", "label": "Goes with ketchup", "type": "topic", "speaker": "You" }
   ],
   "add_edges": [
-    { "id": "bob-owns-session_store_migration", "from": "bob", "to": "session_store_migration", "relation": "owns" },
-    { "id": "review_alice_login_pr-assigned_to-bob", "from": "review_alice_login_pr", "to": "bob", "relation": "assigned_to" },
-    { "id": "review_alice_login_pr-related_to-login_flow", "from": "review_alice_login_pr", "to": "login_flow", "relation": "related_to" },
-    { "id": "login_flow-depends_on-session_store_migration", "from": "login_flow", "to": "session_store_migration", "relation": "depends_on" }
+    { "id": "you-mentions-potato", "from": "you", "to": "potato", "relation": "mentions" },
+    { "id": "potato-related_to-potato_propagation", "from": "potato", "to": "potato_propagation", "relation": "related_to" },
+    { "id": "potato-related_to-potato_sustainability", "from": "potato", "to": "potato_sustainability", "relation": "related_to" },
+    { "id": "potato-related_to-potato_ketchup", "from": "potato", "to": "potato_ketchup", "relation": "related_to" }
   ],
   "update_nodes": [],
-  "merge_nodes": []
+  "merge_nodes": [],
+  "remove_nodes": [],
+  "remove_edges": [],
+  "notes": [
+    {
+      "id": "test_subject_meta",
+      "text": "Speaker is using potatoes as a test subject for this tool — graph content may not reflect real-world priorities.",
+      "intent": "observation"
+    },
+    {
+      "id": "potato_facets_growing",
+      "text": "Speaker has touched on cultivation and sustainability of potatoes — could keep going on culinary uses or history.",
+      "intent": "pattern",
+      "references": ["potato"]
+    }
+  ]
 }
-\`\`\`
+\`\`\``;
 
-Notes:
-- Bob became a node when he first spoke
-- "Review my PR" became an action_item (post-meeting commitment) with assigned_to Bob, not a work_item
-- The cross-person dependency (Alice's login flow touches Bob's session store) became an explicit depends_on edge
-- We did NOT emit \`alice mentions login_flow\` because Alice already owns it`;
+import type { AIThought } from "./schemas";
 
 export interface PromptInput {
 	currentGraphJson: string;
+	previousThoughts: AIThought[];
+	recentTranscript: string;
 	chunkText: string;
 }
 
 export function buildUserPrompt(input: PromptInput): string {
+	const thoughtsBlock =
+		input.previousThoughts.length === 0
+			? "(none yet)"
+			: JSON.stringify(input.previousThoughts, null, 2);
+	const recentBlock = input.recentTranscript.trim() || "(this is the first chunk)";
 	return `## Current graph state
 
 \`\`\`json
 ${input.currentGraphJson}
 \`\`\`
 
-## New transcript chunk
+## Previous thoughts
+
+\`\`\`json
+${thoughtsBlock}
+\`\`\`
+
+## Recent transcript window (last ~60s, for context)
+
+\`\`\`
+${recentBlock}
+\`\`\`
+
+## New transcript chunk (the freshest utterances)
 
 \`\`\`
 ${input.chunkText}
 \`\`\`
 
-Return the GraphDiff that updates the graph based on this chunk. If the chunk adds nothing new, return no_changes: true with empty arrays.`;
+Return the GraphDiff. Update the graph and your thoughts based on the new chunk, using the recent transcript and previous thoughts for context. Be willing to restructure — \`remove_nodes\` and \`remove_edges\` are available when something needs reclassification. Only return \`no_changes: true\` if the new chunk and surrounding context genuinely add nothing.`;
 }

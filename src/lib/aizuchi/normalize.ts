@@ -24,12 +24,21 @@ export interface NormalizeReport {
 	droppedSelfLoops: number;
 	droppedDuplicateEdges: number;
 	droppedPersonMerges: number;
+	droppedDuplicateThoughts: number;
+	thrashGuardTriggered: boolean;
 }
 
 export interface NormalizeResult {
 	diff: GraphDiff;
 	report: NormalizeReport;
 }
+
+/**
+ * Reject a diff that would delete more than this fraction of the existing
+ * graph in one pass. Catches model-side thrashing where the LLM forgets
+ * the cumulative-memory rule and tries to start over.
+ */
+const THRASH_NODE_REMOVAL_FRACTION = 0.5;
 
 /**
  * Post-process a model-produced diff to handle structural correctness the
@@ -49,11 +58,34 @@ export function normalizeDiff(graph: Graph, diff: GraphDiff): NormalizeResult {
 		droppedSelfLoops: 0,
 		droppedDuplicateEdges: 0,
 		droppedPersonMerges: 0,
+		droppedDuplicateThoughts: 0,
+		thrashGuardTriggered: false,
 	};
 
 	if (diff.no_changes) {
 		return { diff, report };
 	}
+
+	// Thrash guard — if the model is trying to wipe most of the existing
+	// graph in one pass, drop the removes (keep additions / updates / notes).
+	let removeNodes = diff.remove_nodes;
+	let removeEdges = diff.remove_edges;
+	if (
+		graph.nodes.length > 4 &&
+		removeNodes.length / graph.nodes.length > THRASH_NODE_REMOVAL_FRACTION
+	) {
+		report.thrashGuardTriggered = true;
+		removeNodes = [];
+		removeEdges = [];
+	}
+
+	// Dedupe thoughts within a single diff by id (keep the last occurrence).
+	const thoughtById = new Map<string, (typeof diff.notes)[number]>();
+	for (const t of diff.notes) {
+		if (thoughtById.has(t.id)) report.droppedDuplicateThoughts++;
+		thoughtById.set(t.id, t);
+	}
+	const dedupedThoughts = [...thoughtById.values()];
 
 	// 1. Ensure every referenced speaker has a person node.
 	const personIds = new Set<string>();
@@ -144,6 +176,9 @@ export function normalizeDiff(graph: Graph, diff: GraphDiff): NormalizeResult {
 			add_nodes: [...diff.add_nodes, ...addedPersonNodes],
 			add_edges: filteredEdges,
 			merge_nodes: filteredMerges,
+			remove_nodes: removeNodes,
+			remove_edges: removeEdges,
+			notes: dedupedThoughts,
 		},
 		report,
 	};
