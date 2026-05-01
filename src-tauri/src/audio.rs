@@ -353,12 +353,14 @@ pub fn transcribe_file(
 // Streaming live capture (Slice C)
 // ---------------------------------------------------------------------------
 
-/// Sliding-window parameters. 3s window + 2s advance = 1s overlap. Smaller
-/// windows hurt whisper accuracy below ~2s (silence-induced hallucination),
-/// so 3s is the lower bound for "feels live" without quality loss. New
-/// transcript appears every 2s.
-const STREAM_WINDOW_SECS: u32 = 3;
-const STREAM_ADVANCE_SECS: u32 = 2;
+/// Sliding-window parameters. 8s window + 3s advance = 5s overlap.
+/// tinydiarize needs more context than transcription alone — with 3s
+/// windows the model essentially never predicted [SPEAKER_TURN] tokens,
+/// because turns rarely fall entirely inside such a short clip. 8s gives
+/// the model enough conversational context to fire turn predictions while
+/// keeping first-chunk latency reasonable (~8s) and refresh cadence at 3s.
+const STREAM_WINDOW_SECS: u32 = 8;
+const STREAM_ADVANCE_SECS: u32 = 3;
 
 /// Handle returned to a caller that started a streaming capture. Drop or
 /// `stop()` to end the session — the threads watch the stop flag and exit
@@ -592,12 +594,16 @@ where
             let window_offset_ms =
                 session_start.elapsed().as_millis() as i64
                     - ((window_samples as i64) * 1000 / (sample_rate as i64));
+            let mut window_turns = 0usize;
             for i in 0..n {
                 let text = match state.full_get_segment_text(i) {
                     Ok(t) => t.trim().to_string(),
                     Err(_) => continue,
                 };
                 let turn_next = state.full_get_segment_speaker_turn_next(i);
+                if turn_next {
+                    window_turns += 1;
+                }
                 if text.is_empty() {
                     if turn_next {
                         speaker_idx = speaker_idx.wrapping_add(1);
@@ -616,6 +622,9 @@ where
                     speaker_idx = speaker_idx.wrapping_add(1);
                 }
             }
+            eprintln!(
+                "[live-transcribe] window: {n} segments, {window_turns} turn(s), speaker_idx={speaker_idx}"
+            );
             // Bound buffer growth: trim everything before the next window's start
             let drop_before = next_start.saturating_add(advance_samples);
             if let Ok(mut b) = trans_buf.lock() {
