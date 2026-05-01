@@ -487,7 +487,7 @@ async fn start_live_capture(
             let _ = app_seg.emit(
                 "transcript-chunk",
                 serde_json::json!({
-                    "speaker": "You",
+                    "speaker": seg.speaker,
                     "text": seg.text,
                     "startMs": seg.start_ms,
                     "endMs": seg.end_ms,

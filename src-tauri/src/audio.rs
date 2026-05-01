@@ -13,12 +13,13 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::SampleFormat;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
-// tiny.en (~39MB) is a deliberate prototype trade-off — base.en is higher
-// quality but the download is slow on HuggingFace from some networks.
-// Switch to ggml-base.en.bin once the pipeline is proven.
+// small.en-tdrz (~488MB) is the tinydiarize-finetuned small.en model. It
+// emits speaker-turn predictions alongside transcription so we can split
+// chunks by speaker. Larger than tiny.en, but tdrz isn't published for
+// tiny — small.en is the smallest size that ships with diarization.
 pub const MODEL_URL: &str =
-    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin";
-pub const MODEL_FILENAME: &str = "ggml-tiny.en.bin";
+    "https://huggingface.co/akashmjn/tinydiarize-whisper.cpp/resolve/main/ggml-small.en-tdrz.bin";
+pub const MODEL_FILENAME: &str = "ggml-small.en-tdrz.bin";
 use hound::{SampleFormat as HoundSampleFormat, WavSpec, WavWriter};
 
 /// Records from the system default input device for `duration_secs` and
@@ -172,11 +173,23 @@ pub struct TranscriptSegment {
     pub text: String,
     pub start_ms: i64,
     pub end_ms: i64,
+    /// Cycling label like "Speaker A", "Speaker B" derived from
+    /// tinydiarize's speaker-turn predictions. The tdrz model only knows
+    /// "did the speaker just change" — it does not identify *who* — so
+    /// labels alternate but don't persist identity across windows.
+    pub speaker: String,
 }
 
-/// Minimum size we'll accept as a complete model. tiny.en is ~39MB; bump
-/// this constant if MODEL_URL changes to a larger model.
-const MIN_MODEL_BYTES: u64 = 30_000_000;
+/// Format a 0-based speaker index as "Speaker A", "Speaker B", … "Speaker Z",
+/// "Speaker AA", etc. Wraps around at 26 by default for the prototype.
+fn speaker_label(idx: usize) -> String {
+    let letter = char::from(b'A' + (idx % 26) as u8);
+    format!("Speaker {letter}")
+}
+
+/// Minimum size we'll accept as a complete model. small.en-tdrz is ~488MB;
+/// bump this constant if MODEL_URL changes again.
+const MIN_MODEL_BYTES: u64 = 400_000_000;
 
 /// Downloads the model via curl if it's not already at `path`. Blocking.
 /// Re-downloads when the existing file is suspiciously small (partial fetch
@@ -300,6 +313,7 @@ pub fn transcribe_file(
     params.set_print_realtime(false);
     params.set_print_special(false);
     params.set_print_timestamps(false);
+    params.set_tdrz_enable(true);
 
     state
         .full(params, &samples)
@@ -309,6 +323,7 @@ pub fn transcribe_file(
         .full_n_segments()
         .map_err(|e| format!("Failed to read segment count: {e}"))?;
     let mut segments = Vec::with_capacity(n as usize);
+    let mut speaker_idx: usize = 0;
     for i in 0..n {
         let text = state
             .full_get_segment_text(i)
@@ -319,12 +334,17 @@ pub fn transcribe_file(
         let t1 = state
             .full_get_segment_t1(i)
             .map_err(|e| format!("Failed to read segment {i} t1: {e}"))?;
+        let speaker = speaker_label(speaker_idx);
         // whisper.cpp returns timestamps in 10ms units
         segments.push(TranscriptSegment {
             text: text.trim().to_string(),
             start_ms: t0 * 10,
             end_ms: t1 * 10,
+            speaker,
         });
+        if state.full_get_segment_speaker_turn_next(i) {
+            speaker_idx = speaker_idx.wrapping_add(1);
+        }
     }
     Ok(segments)
 }
@@ -526,6 +546,12 @@ where
         let mut next_start = 0usize;
         // Track absolute meeting time for emitted timestamps
         let session_start = std::time::Instant::now();
+        // tdrz produces a speaker_turn_next flag between successive segments
+        // *within a single inference call*. Across window boundaries we have
+        // no signal, so we just continue the current label — the next within-
+        // window turn will resync. This loses speaker changes that happen
+        // exactly at a boundary but is the simplest sound default.
+        let mut speaker_idx: usize = 0;
 
         while !trans_stop.load(Ordering::Relaxed) {
             let buf_len = trans_buf.lock().map(|b| b.len()).unwrap_or(0);
@@ -554,6 +580,7 @@ where
             params.set_print_special(false);
             params.set_print_timestamps(false);
             params.set_no_context(true);
+            params.set_tdrz_enable(true);
 
             if let Err(e) = state.full(params, &resampled) {
                 eprintln!("[live-transcribe] inference failed: {e}");
@@ -570,7 +597,11 @@ where
                     Ok(t) => t.trim().to_string(),
                     Err(_) => continue,
                 };
+                let turn_next = state.full_get_segment_speaker_turn_next(i);
                 if text.is_empty() {
+                    if turn_next {
+                        speaker_idx = speaker_idx.wrapping_add(1);
+                    }
                     continue;
                 }
                 let t0 = state.full_get_segment_t0(i).unwrap_or(0) * 10;
@@ -579,7 +610,11 @@ where
                     text,
                     start_ms: window_offset_ms + t0,
                     end_ms: window_offset_ms + t1,
+                    speaker: speaker_label(speaker_idx),
                 });
+                if turn_next {
+                    speaker_idx = speaker_idx.wrapping_add(1);
+                }
             }
             // Bound buffer growth: trim everything before the next window's start
             let drop_before = next_start.saturating_add(advance_samples);
