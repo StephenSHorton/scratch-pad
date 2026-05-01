@@ -8,60 +8,13 @@
  *   AIZUCHI_PROVIDER=anthropic ANTHROPIC_API_KEY=sk-... bun run src/lib/aizuchi/harness.ts
  */
 
+import { batchTranscript, formatChunkBatch } from "./batcher";
 import { standupTranscript } from "./fixtures/standup-transcript";
 import { mutateGraph } from "./graph-mutation";
-import {
-	applyDiff,
-	emptyGraph,
-	type Graph,
-	type TranscriptChunk,
-} from "./schemas";
+import { applyDiff, emptyGraph, type Graph } from "./schemas";
 
 const SIZE_THRESHOLD_WORDS = 60;
 const TIME_THRESHOLD_MS = 25_000;
-
-interface Batch {
-	chunks: TranscriptChunk[];
-	wordCount: number;
-}
-
-function wordCount(text: string): number {
-	return text.trim().split(/\s+/).filter(Boolean).length;
-}
-
-function formatChunkBatch(batch: Batch): string {
-	return batch.chunks.map((c) => `${c.speaker}: ${c.text}`).join("\n");
-}
-
-function* batchTranscript(
-	chunks: TranscriptChunk[],
-	sizeThresholdWords: number,
-	timeThresholdMs: number,
-): Generator<Batch> {
-	let buf: TranscriptChunk[] = [];
-	let words = 0;
-	let bufferStartedMs = chunks[0]?.startMs ?? 0;
-
-	for (const chunk of chunks) {
-		buf.push(chunk);
-		words += wordCount(chunk.text);
-
-		const elapsed = chunk.endMs - bufferStartedMs;
-		const sizeMet = words >= sizeThresholdWords;
-		const timeMet = elapsed >= timeThresholdMs;
-
-		if (sizeMet || timeMet) {
-			yield { chunks: buf, wordCount: words };
-			buf = [];
-			words = 0;
-			bufferStartedMs = chunk.endMs;
-		}
-	}
-
-	if (buf.length > 0) {
-		yield { chunks: buf, wordCount: words };
-	}
-}
 
 function summarizeGraph(graph: Graph): string {
 	if (graph.nodes.length === 0 && graph.edges.length === 0) return "(empty)";

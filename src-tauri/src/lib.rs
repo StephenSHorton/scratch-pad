@@ -10,7 +10,10 @@ use std::thread;
 use std::time::Duration;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIconBuilder;
+use tauri::webview::Color;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
+
+const TRANSPARENT_BG: Color = Color(0, 0, 0, 0);
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_updater::UpdaterExt;
 
@@ -62,6 +65,10 @@ impl Default for Settings {
 
 pub struct SettingsState {
     pub settings: Mutex<Settings>,
+}
+
+pub struct PaletteState {
+    pub source_label: Mutex<Option<String>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +163,85 @@ fn create_blank_note() {
     write_notes(&notes);
 }
 
+fn always_on_top_setting(app: &AppHandle) -> bool {
+    app.try_state::<SettingsState>()
+        .and_then(|s| s.settings.lock().ok().map(|s| s.always_on_top))
+        .unwrap_or(false)
+}
+
+fn open_logs_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("logs") {
+        window.set_focus().ok();
+        return;
+    }
+    WebviewWindowBuilder::new(app, "logs", WebviewUrl::default())
+        .title("Scratch Pad Logs")
+        .decorations(false)
+        .transparent(true)
+        .background_color(TRANSPARENT_BG)
+        .always_on_top(always_on_top_setting(app))
+        .inner_size(520.0, 400.0)
+        .build()
+        .ok();
+}
+
+fn open_lobby_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("lobby") {
+        window.set_focus().ok();
+        return;
+    }
+    WebviewWindowBuilder::new(app, "lobby", WebviewUrl::default())
+        .title("Multiplayer")
+        .decorations(false)
+        .transparent(true)
+        .background_color(TRANSPARENT_BG)
+        .always_on_top(always_on_top_setting(app))
+        .inner_size(400.0, 500.0)
+        .center()
+        .build()
+        .ok();
+}
+
+fn open_meeting_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("meeting-test") {
+        window.set_focus().ok();
+        return;
+    }
+    WebviewWindowBuilder::new(
+        app,
+        "meeting-test",
+        WebviewUrl::App("meeting/test".into()),
+    )
+    .title("Aizuchi — meeting prototype")
+    .inner_size(1400.0, 900.0)
+    .center()
+    .build()
+    .ok();
+}
+
+fn open_palette_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("palette") {
+        window.set_focus().ok();
+        return;
+    }
+    // Pure-transparent window — the glass is CSS (backdrop-filter + bg-black/40)
+    // so it animates in as one unit with the motion fade. Native vibrancy
+    // would render before React mounts, causing a visible two-step appear.
+    WebviewWindowBuilder::new(app, "palette", WebviewUrl::default())
+        .title("Command Palette")
+        .decorations(false)
+        .transparent(true)
+        .background_color(TRANSPARENT_BG)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .resizable(false)
+        .inner_size(640.0, 420.0)
+        .center()
+        .focused(true)
+        .build()
+        .ok();
+}
+
 // ---------------------------------------------------------------------------
 // Tauri commands
 // ---------------------------------------------------------------------------
@@ -236,6 +322,51 @@ fn clear_note_highlight(id: String) -> Result<(), String> {
     let json = serde_json::to_string_pretty(&highlights).map_err(|e| e.to_string())?;
     fs::write(&path, json).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Command palette
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn open_palette(
+    app: AppHandle,
+    source_label: Option<String>,
+    palette_state: tauri::State<'_, PaletteState>,
+) {
+    if let Ok(mut slot) = palette_state.source_label.lock() {
+        *slot = source_label;
+    }
+    open_palette_window(&app);
+}
+
+#[tauri::command]
+fn close_palette(app: AppHandle) {
+    if let Some(window) = app.get_webview_window("palette") {
+        window.close().ok();
+    }
+}
+
+#[tauri::command]
+fn get_palette_context(palette_state: tauri::State<'_, PaletteState>) -> Option<String> {
+    palette_state
+        .source_label
+        .lock()
+        .ok()
+        .and_then(|s| s.clone())
+}
+
+#[tauri::command]
+fn dispatch_action(app: AppHandle, id: String, state: tauri::State<'_, NotesState>) {
+    log(&format!("dispatch_action: {id}"));
+    match id.as_str() {
+        "new_pad" => create_blank_note(),
+        "organize" => organize_windows(&app, &state),
+        "show_logs" => open_logs_window(&app),
+        "lobby" => open_lobby_window(&app),
+        "aizuchi" => open_meeting_window(&app),
+        _ => log(&format!("dispatch_action: unknown id {id}")),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -546,6 +677,7 @@ fn create_note_window(app: &AppHandle, note: &Note, _index: usize) {
         .title(note.title.as_deref().unwrap_or("Scratch Pad"))
         .decorations(false)
         .transparent(true)
+        .background_color(TRANSPARENT_BG)
         .always_on_top(always_on_top)
         .inner_size(win_w, win_h);
 
@@ -703,6 +835,9 @@ pub fn run() {
         .manage(SettingsState {
             settings: Mutex::new(read_settings()),
         })
+        .manage(PaletteState {
+            source_label: Mutex::new(None),
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
@@ -725,7 +860,11 @@ pub fn run() {
             host_room,
             join_room,
             disconnect_peer,
-            get_local_network_info
+            get_local_network_info,
+            open_palette,
+            close_palette,
+            get_palette_context,
+            dispatch_action,
         ])
         .setup(|app| {
             // Build the macOS menu bar
@@ -810,44 +949,9 @@ pub fn run() {
                         let h = handle.clone();
                         tauri::async_runtime::spawn(check_for_updates(h, false));
                     }
-                    "show_logs" => {
-                        // Create or focus the log viewer window
-                        if let Some(window) = handle.get_webview_window("logs") {
-                            window.set_focus().ok();
-                        } else {
-                            let always_on_top = handle
-                                .try_state::<SettingsState>()
-                                .and_then(|s| s.settings.lock().ok().map(|s| s.always_on_top))
-                                .unwrap_or(false);
-                            WebviewWindowBuilder::new(&handle, "logs", WebviewUrl::default())
-                                .title("Scratch Pad Logs")
-                                .decorations(false)
-                                .transparent(true)
-                                .always_on_top(always_on_top)
-                                .inner_size(520.0, 400.0)
-                                .build()
-                                .ok();
-                        }
-                    }
-                    "lobby" | "tray_lobby" => {
-                        if let Some(window) = handle.get_webview_window("lobby") {
-                            window.set_focus().ok();
-                        } else {
-                            let always_on_top = handle
-                                .try_state::<SettingsState>()
-                                .and_then(|s| s.settings.lock().ok().map(|s| s.always_on_top))
-                                .unwrap_or(false);
-                            WebviewWindowBuilder::new(&handle, "lobby", WebviewUrl::default())
-                                .title("Multiplayer")
-                                .decorations(false)
-                                .transparent(true)
-                                .always_on_top(always_on_top)
-                                .inner_size(400.0, 500.0)
-                                .center()
-                                .build()
-                                .ok();
-                        }
-                    }
+                    "show_logs" => open_logs_window(&handle),
+                    "lobby" | "tray_lobby" => open_lobby_window(&handle),
+                    "tray_aizuchi" => open_meeting_window(&handle),
                     "always_on_top" => {
                         let on_top = {
                             let settings_state = handle.state::<SettingsState>();
@@ -884,6 +988,8 @@ pub fn run() {
                     &MenuItem::with_id(app, "tray_organize", "Organize Pads", true, None::<&str>)?,
                     &PredefinedMenuItem::separator(app)?,
                     &MenuItem::with_id(app, "tray_lobby", "Multiplayer...", true, None::<&str>)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &MenuItem::with_id(app, "tray_aizuchi", "Aizuchi prototype", true, None::<&str>)?,
                     &PredefinedMenuItem::separator(app)?,
                     &MenuItem::with_id(app, "tray_quit", "Quit Scratch Pad", true, None::<&str>)?,
                 ],

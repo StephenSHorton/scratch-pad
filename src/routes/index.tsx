@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useState } from "react";
+import { Palette } from "@/components/palette/Palette";
+import { useCommandPaletteHotkey } from "@/hooks/useCommandPaletteHotkey";
 import { NoteEditor } from "../lexical/NoteEditor";
 
 // Note type
@@ -87,7 +89,11 @@ function StickyNote() {
 	const isRemote = windowLabel.startsWith("remote-");
 	const isLogs = windowLabel === "logs";
 	const isLobby = windowLabel === "lobby";
+	const isPalette = windowLabel === "palette";
 	const noteId = isRemote ? windowLabel.replace("remote-", "") : windowLabel;
+
+	// Cmd+K opens the command palette (no-op when this window IS the palette)
+	useCommandPaletteHotkey();
 
 	// Log viewer: poll for new content every 1.5s
 	useEffect(() => {
@@ -136,17 +142,17 @@ function StickyNote() {
 
 	// Listen for highlight events from MCP (local notes only)
 	useEffect(() => {
-		if (isLogs || isRemote) return;
+		if (isLogs || isRemote || isPalette) return;
 		const unlisten = listen<string>("note-highlight", (event) => {
 			setHighlightPattern(event.payload);
 		});
 		return () => {
 			unlisten.then((fn) => fn());
 		};
-	}, [isLogs, isRemote]);
+	}, [isLogs, isRemote, isPalette]);
 
 	useEffect(() => {
-		if (isLogs || isLobby) return; // Skip note fetching for log viewer / lobby
+		if (isLogs || isLobby || isPalette) return; // Skip note fetching for non-note windows
 		if (isRemote) {
 			// Fetch remote note data from Tauri backend
 			invoke<RemoteNote | null>("get_remote_note", { id: noteId }).then(
@@ -226,6 +232,11 @@ function StickyNote() {
 			invoke("clear_note_highlight", { id: note.id }).catch(() => {});
 		}
 	}, [note]);
+
+	// Command palette rendering
+	if (isPalette) {
+		return <Palette />;
+	}
 
 	// Log viewer rendering
 	if (isLogs) {
