@@ -35,6 +35,12 @@ const ACTIONS: Action[] = [
 		label: "Show logs",
 		description: "Open the log viewer",
 	},
+	{
+		id: "record_and_transcribe",
+		label: "Record + transcribe (5s)",
+		description:
+			"Capture 5s of mic audio, run whisper (~39MB tiny.en model on first use), drop a sticky note",
+	},
 ];
 
 function rank(query: string, action: Action): number {
@@ -91,6 +97,14 @@ export function Palette() {
 	}, []);
 
 	const runAction = async (id: string) => {
+		if (id === "record_and_transcribe") {
+			console.log("[audio] starting record + transcribe…");
+			invoke<string>("record_and_transcribe")
+				.then((text) => console.log("[audio] transcript:", text))
+				.catch((err) => console.error("[audio] failed:", err));
+			beginClose();
+			return;
+		}
 		await invoke("dispatch_action", { id }).catch(() => {});
 		beginClose();
 	};

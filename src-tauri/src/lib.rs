@@ -1,3 +1,4 @@
+mod audio;
 mod network;
 
 use chrono::{DateTime, Utc};
@@ -153,6 +154,23 @@ fn create_blank_note() {
         title: None,
         body: String::new(),
         color: "yellow".to_string(),
+        created_at: Utc::now().to_rfc3339(),
+        expires_at: None,
+        position: None,
+        size: None,
+    };
+    let mut notes = read_notes();
+    notes.push(note);
+    write_notes(&notes);
+}
+
+fn create_note_with_body(title: Option<String>, body: String, color: &str) {
+    log("Creating note with body");
+    let note = Note {
+        id: uuid::Uuid::new_v4().to_string(),
+        title,
+        body,
+        color: color.to_string(),
         created_at: Utc::now().to_rfc3339(),
         expires_at: None,
         position: None,
@@ -408,6 +426,159 @@ fn dispatch_action(app: AppHandle, id: String, state: tauri::State<'_, NotesStat
         "aizuchi" => open_meeting_window(&app),
         _ => log(&format!("dispatch_action: unknown id {id}")),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Audio commands
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+async fn record_test_audio(duration_secs: Option<u32>) -> Result<String, String> {
+    let secs = duration_secs.unwrap_or(5);
+    let path = notes_dir().join("test-recording.wav");
+    let path_clone = path.clone();
+    log(&format!("record_test_audio: starting {secs}s capture → {path:?}"));
+    tauri::async_runtime::spawn_blocking(move || audio::record_to_file(secs, path_clone, |_| {}))
+        .await
+        .map_err(|e| format!("Recording task failed: {e}"))??;
+    log(&format!("record_test_audio: completed → {path:?}"));
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn record_and_transcribe(
+    app: AppHandle,
+    duration_secs: Option<u32>,
+) -> Result<String, String> {
+    let secs = duration_secs.unwrap_or(5);
+    let wav_path = notes_dir().join("test-recording.wav");
+    let model_path = notes_dir().join("models").join(audio::MODEL_FILENAME);
+    log(&format!(
+        "record_and_transcribe: starting {secs}s capture → {wav_path:?}"
+    ));
+
+    open_recording_session_window(&app);
+    let app_record = app.clone();
+    let app_status = app.clone();
+    emit_phase(&app, "recording", &format!("Recording — {secs}s"));
+
+    let wav = wav_path.clone();
+    let model = model_path.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        let level_cb = move |level: f32| {
+            let _ = app_record.emit("audio-level", level);
+        };
+        audio::record_to_file(secs, wav.clone(), level_cb)?;
+        emit_phase(&app_status, "downloading", "Loading model…");
+        audio::ensure_model(&model, audio::MODEL_URL)?;
+        emit_phase(&app_status, "transcribing", "Transcribing…");
+        let segments = audio::transcribe_file(&model, &wav)?;
+        Ok(segments
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+            .trim()
+            .to_string())
+    })
+    .await
+    .map_err(|e| format!("Audio task failed: {e}"))?;
+
+    match result {
+        Ok(text) => {
+            log(&format!("record_and_transcribe: result = {text:?}"));
+            let body = if text.is_empty() {
+                "(empty transcript — try recording again)".to_string()
+            } else {
+                text.clone()
+            };
+            create_note_with_body(Some("Transcript".to_string()), body, "blue");
+            emit_phase(&app, "done", "Transcript ready");
+            schedule_close_recording_session(app.clone(), 1200);
+            Ok(text)
+        }
+        Err(e) => {
+            log(&format!("record_and_transcribe: error = {e}"));
+            emit_phase(&app, "error", &e);
+            schedule_close_recording_session(app.clone(), 4000);
+            Err(e)
+        }
+    }
+}
+
+fn emit_phase(app: &AppHandle, phase: &str, label: &str) {
+    let _ = app.emit(
+        "audio-phase",
+        serde_json::json!({ "phase": phase, "label": label }),
+    );
+}
+
+fn schedule_close_recording_session(app: AppHandle, delay_ms: u64) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        if let Some(window) = app.get_webview_window("recording-session") {
+            window.close().ok();
+        }
+    });
+}
+
+fn open_recording_session_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("recording-session") {
+        window.set_focus().ok();
+        return;
+    }
+    WebviewWindowBuilder::new(app, "recording-session", WebviewUrl::default())
+        .title("Recording")
+        .decorations(false)
+        .transparent(true)
+        .background_color(TRANSPARENT_BG)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .resizable(false)
+        .inner_size(360.0, 240.0)
+        .center()
+        .focused(false)
+        .build()
+        .ok();
+}
+
+#[tauri::command]
+async fn transcribe_test_audio() -> Result<String, String> {
+    let wav_path = notes_dir().join("test-recording.wav");
+    if !wav_path.exists() {
+        return Err(
+            "No test-recording.wav found. Run 'Test mic recording' first.".into(),
+        );
+    }
+    let model_path = notes_dir().join("models").join(audio::MODEL_FILENAME);
+    log(&format!(
+        "transcribe_test_audio: starting (model={model_path:?}, wav={wav_path:?})"
+    ));
+
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        audio::ensure_model(&model_path, audio::MODEL_URL)?;
+        let segments = audio::transcribe_file(&model_path, &wav_path)?;
+        Ok(segments
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+            .trim()
+            .to_string())
+    })
+    .await
+    .map_err(|e| format!("Transcription task failed: {e}"))??;
+
+    log(&format!("transcribe_test_audio: result = {result:?}"));
+
+    let body = if result.is_empty() {
+        "(empty transcript — try recording again)".to_string()
+    } else {
+        result.clone()
+    };
+    create_note_with_body(Some("Transcript".to_string()), body, "blue");
+
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------
@@ -906,6 +1077,9 @@ pub fn run() {
             close_palette,
             get_palette_context,
             dispatch_action,
+            record_test_audio,
+            transcribe_test_audio,
+            record_and_transcribe,
         ])
         .setup(|app| {
             // Build the macOS menu bar
