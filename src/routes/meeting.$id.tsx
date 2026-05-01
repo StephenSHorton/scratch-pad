@@ -21,6 +21,7 @@ import {
 } from "@/lib/aizuchi/feeder";
 import { standupTranscript } from "@/lib/aizuchi/fixtures/standup-transcript";
 import { mutateGraph } from "@/lib/aizuchi/graph-mutation";
+import { generateMeetingNotes } from "@/lib/aizuchi/meeting-notes";
 import {
 	type AIThoughtRecord,
 	applyDiff,
@@ -408,6 +409,38 @@ function MeetingPrototype() {
 		setStatus("done");
 	};
 
+	const [generatingNotes, setGeneratingNotes] = useState(false);
+
+	const generateNotes = async () => {
+		if (generatingNotes) return;
+		setGeneratingNotes(true);
+		const previousStatus = status;
+		setStatus("thinking");
+		setError(null);
+		try {
+			const result = await generateMeetingNotes(
+				graph,
+				thoughtsRef.current,
+				transcriptRef.current,
+			);
+			console.log(
+				`[meeting-notes] generated in ${Math.round(result.latencyMs)}ms via ${result.providerLabel}`,
+			);
+			await invoke("create_note", {
+				title: result.title,
+				body: result.body,
+				color: "blue",
+			});
+			setStatus(previousStatus);
+		} catch (err) {
+			console.error("generateMeetingNotes failed", err);
+			setError(err instanceof Error ? err.message : String(err));
+			setStatus("error");
+		} finally {
+			setGeneratingNotes(false);
+		}
+	};
+
 	useEffect(() => {
 		return () => {
 			signalRef.current.cancelled = true;
@@ -437,12 +470,14 @@ function MeetingPrototype() {
 							graph={graph}
 							error={error}
 							stats={stats}
+							generatingNotes={generatingNotes}
 							onStartDemo={startDemo}
 							onStartLive={startLive}
 							onStopLive={stopLive}
 							onPause={pauseDemo}
 							onResume={resumeDemo}
 							onReset={resetDemo}
+							onGenerateNotes={generateNotes}
 						/>
 					</Panel>
 					{transcript.length > 0 && (
@@ -469,12 +504,14 @@ function StatusPanel({
 	graph,
 	error,
 	stats,
+	generatingNotes,
 	onStartDemo,
 	onStartLive,
 	onStopLive,
 	onPause,
 	onResume,
 	onReset,
+	onGenerateNotes,
 }: {
 	status: Status;
 	mode: Mode;
@@ -483,12 +520,14 @@ function StatusPanel({
 	graph: Graph;
 	error: string | null;
 	stats: RunStats;
+	generatingNotes: boolean;
 	onStartDemo: () => void;
 	onStartLive: () => void;
 	onStopLive: () => void;
 	onPause: () => void;
 	onResume: () => void;
 	onReset: () => void;
+	onGenerateNotes: () => void;
 }) {
 	const dot =
 		status === "listening"
@@ -610,6 +649,19 @@ function StatusPanel({
 					</button>
 				)}
 			</div>
+
+			{(graph.nodes.length > 0 || status === "done") && (
+				<div className="flex flex-wrap gap-1.5">
+					<button
+						type="button"
+						onClick={onGenerateNotes}
+						disabled={generatingNotes}
+						className="rounded-md bg-sky-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-60"
+					>
+						{generatingNotes ? "Generating notes…" : "Generate meeting notes"}
+					</button>
+				</div>
+			)}
 
 			{status === "idle" && (
 				<div className="rounded border border-border/40 bg-muted/30 p-2 text-[11px] text-muted-foreground">

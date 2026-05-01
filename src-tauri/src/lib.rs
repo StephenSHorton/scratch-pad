@@ -369,6 +369,12 @@ fn update_note_position(id: String, x: f64, y: f64, state: tauri::State<'_, Note
     }
 }
 
+#[tauri::command]
+fn create_note(title: Option<String>, body: String, color: Option<String>) {
+    let color_str = color.unwrap_or_else(|| "yellow".to_string());
+    create_note_with_body(title, body, &color_str);
+}
+
 // ---------------------------------------------------------------------------
 // Highlight commands
 // ---------------------------------------------------------------------------
@@ -1155,6 +1161,7 @@ pub fn run() {
             update_note_body,
             update_note_color,
             update_note_position,
+            create_note,
             read_log_tail,
             clear_note_highlight,
             get_peers,
