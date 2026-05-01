@@ -1,11 +1,12 @@
 //! Audio capture via cpal + whisper.cpp transcription via whisper-rs.
 //! Slice A: blocking record-to-file for mic verification.
 //! Slice B: ensure_model + transcribe_file for offline whisper inference.
-//! Streaming sliding-window pipeline lands in Slice C.
+//! Slice C: streaming sliding-window capture + per-window whisper.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -326,4 +327,275 @@ pub fn transcribe_file(
         });
     }
     Ok(segments)
+}
+
+// ---------------------------------------------------------------------------
+// Streaming live capture (Slice C)
+// ---------------------------------------------------------------------------
+
+/// Sliding-window parameters. With 5s window + 4s advance, windows overlap
+/// by 1s — gives whisper enough context to handle word boundaries without
+/// missing utterances that straddle a window edge.
+const STREAM_WINDOW_SECS: u32 = 5;
+const STREAM_ADVANCE_SECS: u32 = 4;
+
+/// Handle returned to a caller that started a streaming capture. Drop or
+/// `stop()` to end the session — the threads watch the stop flag and exit
+/// cleanly.
+pub struct LiveCapture {
+    stop_flag: Arc<AtomicBool>,
+    capture_thread: Option<JoinHandle<()>>,
+    transcribe_thread: Option<JoinHandle<()>>,
+}
+
+impl LiveCapture {
+    pub fn stop(mut self) {
+        self.stop_flag.store(true, Ordering::Relaxed);
+        if let Some(t) = self.capture_thread.take() {
+            t.join().ok();
+        }
+        if let Some(t) = self.transcribe_thread.take() {
+            t.join().ok();
+        }
+    }
+}
+
+/// Starts a streaming capture session. Spawns a capture thread that holds
+/// the cpal Stream and an audio-buffer mutex, plus a transcribe thread
+/// that periodically drains a window from the buffer, runs whisper, and
+/// invokes `on_segment` for each transcript segment whisper returns.
+/// `on_level` mirrors the Slice A callback for live level visualization.
+pub fn start_live_capture<L, S>(
+    model_path: PathBuf,
+    on_level: L,
+    on_segment: S,
+) -> Result<LiveCapture, String>
+where
+    L: Fn(f32) + Send + Sync + 'static + Clone,
+    S: Fn(TranscriptSegment) + Send + Sync + 'static,
+{
+    let host = cpal::default_host();
+    let device = host
+        .default_input_device()
+        .ok_or_else(|| "No default input device available".to_string())?;
+    let supported = device
+        .default_input_config()
+        .map_err(|e| format!("Failed to query input config: {e}"))?;
+    let sample_rate = supported.sample_rate().0;
+    let channels = supported.channels();
+    let sample_format = supported.sample_format();
+    let stream_config: cpal::StreamConfig = supported.into();
+
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let buf: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::with_capacity(
+        sample_rate as usize * 60,
+    )));
+
+    // Capture thread: builds stream, holds it for the session, exits on stop
+    let capture_buf = buf.clone();
+    let capture_stop = stop_flag.clone();
+    let capture_level = on_level.clone();
+    let capture_thread = thread::spawn(move || {
+        let err_fn = |err| eprintln!("[live-capture] stream error: {err}");
+
+        let stream_result = match sample_format {
+            SampleFormat::F32 => {
+                let buf_cb = capture_buf.clone();
+                let level_cb = capture_level.clone();
+                device.build_input_stream(
+                    &stream_config,
+                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                        let mut peak = 0f32;
+                        if let Ok(mut guard) = buf_cb.lock() {
+                            for &sample in data {
+                                let abs = sample.abs();
+                                if abs > peak {
+                                    peak = abs;
+                                }
+                                if channels == 1 {
+                                    guard.push(sample);
+                                }
+                            }
+                            // Multichannel downmix: average each frame
+                            if channels > 1 {
+                                let n = channels as usize;
+                                for chunk in data.chunks(n) {
+                                    let avg: f32 =
+                                        chunk.iter().copied().sum::<f32>() / n as f32;
+                                    guard.push(avg);
+                                }
+                            }
+                        }
+                        level_cb(peak.min(1.0));
+                    },
+                    err_fn,
+                    None,
+                )
+            }
+            SampleFormat::I16 => {
+                let buf_cb = capture_buf.clone();
+                let level_cb = capture_level.clone();
+                device.build_input_stream(
+                    &stream_config,
+                    move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                        let mut peak: i16 = 0;
+                        if let Ok(mut guard) = buf_cb.lock() {
+                            if channels == 1 {
+                                for &s in data {
+                                    if s.abs() > peak {
+                                        peak = s.abs();
+                                    }
+                                    guard.push(s as f32 / i16::MAX as f32);
+                                }
+                            } else {
+                                let n = channels as usize;
+                                for chunk in data.chunks(n) {
+                                    let avg: f32 = chunk
+                                        .iter()
+                                        .map(|&s| s as f32 / i16::MAX as f32)
+                                        .sum::<f32>()
+                                        / n as f32;
+                                    guard.push(avg);
+                                    for &s in chunk {
+                                        if s.abs() > peak {
+                                            peak = s.abs();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        level_cb(peak as f32 / i16::MAX as f32);
+                    },
+                    err_fn,
+                    None,
+                )
+            }
+            other => {
+                eprintln!("[live-capture] unsupported sample format: {other:?}");
+                return;
+            }
+        };
+
+        let stream = match stream_result {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[live-capture] failed to build stream: {e}");
+                return;
+            }
+        };
+        if let Err(e) = stream.play() {
+            eprintln!("[live-capture] failed to start stream: {e}");
+            return;
+        }
+
+        while !capture_stop.load(Ordering::Relaxed) {
+            thread::sleep(Duration::from_millis(50));
+        }
+        drop(stream);
+    });
+
+    // Transcribe thread: load whisper once, drain windows on a timer
+    let trans_buf = buf.clone();
+    let trans_stop = stop_flag.clone();
+    let model_str = model_path
+        .to_str()
+        .ok_or("Model path is not valid UTF-8")?
+        .to_string();
+    let transcribe_thread = thread::spawn(move || {
+        let ctx = match WhisperContext::new_with_params(
+            &model_str,
+            WhisperContextParameters::default(),
+        ) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("[live-transcribe] failed to load model: {e}");
+                return;
+            }
+        };
+        let mut state = match ctx.create_state() {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[live-transcribe] failed to create state: {e}");
+                return;
+            }
+        };
+
+        let window_samples = (sample_rate * STREAM_WINDOW_SECS) as usize;
+        let advance_samples = (sample_rate * STREAM_ADVANCE_SECS) as usize;
+        let mut next_start = 0usize;
+        // Track absolute meeting time for emitted timestamps
+        let session_start = std::time::Instant::now();
+
+        while !trans_stop.load(Ordering::Relaxed) {
+            let buf_len = trans_buf.lock().map(|b| b.len()).unwrap_or(0);
+            if buf_len < next_start + window_samples {
+                thread::sleep(Duration::from_millis(250));
+                continue;
+            }
+
+            let window: Vec<f32> = match trans_buf.lock() {
+                Ok(b) => b[next_start..next_start + window_samples].to_vec(),
+                Err(_) => continue,
+            };
+
+            let resampled = if sample_rate == 16_000 {
+                window
+            } else {
+                resample_linear(&window, sample_rate, 16_000)
+            };
+
+            let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+            params.set_n_threads(4);
+            params.set_translate(false);
+            params.set_language(Some("en"));
+            params.set_print_progress(false);
+            params.set_print_realtime(false);
+            params.set_print_special(false);
+            params.set_print_timestamps(false);
+            params.set_no_context(true);
+
+            if let Err(e) = state.full(params, &resampled) {
+                eprintln!("[live-transcribe] inference failed: {e}");
+                next_start += advance_samples;
+                continue;
+            }
+
+            let n = state.full_n_segments().unwrap_or(0);
+            let window_offset_ms =
+                session_start.elapsed().as_millis() as i64
+                    - ((window_samples as i64) * 1000 / (sample_rate as i64));
+            for i in 0..n {
+                let text = match state.full_get_segment_text(i) {
+                    Ok(t) => t.trim().to_string(),
+                    Err(_) => continue,
+                };
+                if text.is_empty() {
+                    continue;
+                }
+                let t0 = state.full_get_segment_t0(i).unwrap_or(0) * 10;
+                let t1 = state.full_get_segment_t1(i).unwrap_or(0) * 10;
+                on_segment(TranscriptSegment {
+                    text,
+                    start_ms: window_offset_ms + t0,
+                    end_ms: window_offset_ms + t1,
+                });
+            }
+            // Bound buffer growth: trim everything before the next window's start
+            let drop_before = next_start.saturating_add(advance_samples);
+            if let Ok(mut b) = trans_buf.lock() {
+                if b.len() > drop_before {
+                    b.drain(0..drop_before);
+                    next_start = 0;
+                }
+            }
+            // Yield CPU briefly so capture isn't starved
+            thread::sleep(Duration::from_millis(20));
+        }
+    });
+
+    Ok(LiveCapture {
+        stop_flag,
+        capture_thread: Some(capture_thread),
+        transcribe_thread: Some(transcribe_thread),
+    })
 }

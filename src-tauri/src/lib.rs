@@ -72,6 +72,11 @@ pub struct PaletteState {
     pub source_label: Mutex<Option<String>>,
 }
 
+pub struct LiveAudioState {
+    pub capture: Mutex<Option<audio::LiveCapture>>,
+    pub phase: Mutex<(String, String)>,
+}
+
 // ---------------------------------------------------------------------------
 // Helper functions
 // ---------------------------------------------------------------------------
@@ -446,6 +451,76 @@ async fn record_test_audio(duration_secs: Option<u32>) -> Result<String, String>
 }
 
 #[tauri::command]
+async fn start_live_capture(
+    app: AppHandle,
+    state: tauri::State<'_, LiveAudioState>,
+) -> Result<(), String> {
+    {
+        let guard = state.capture.lock().map_err(|e| e.to_string())?;
+        if guard.is_some() {
+            return Err("Live capture already running".into());
+        }
+    }
+
+    let model_path = notes_dir().join("models").join(audio::MODEL_FILENAME);
+    open_recording_session_window(&app);
+    emit_phase(&app, "downloading", "Loading model…");
+
+    let app_for_model = app.clone();
+    let model_path_clone = model_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        audio::ensure_model(&model_path_clone, audio::MODEL_URL)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    emit_phase(&app_for_model, "live", "Live");
+
+    let app_level = app.clone();
+    let app_seg = app.clone();
+    let capture = audio::start_live_capture(
+        model_path,
+        move |level| {
+            let _ = app_level.emit("audio-level", level);
+        },
+        move |seg| {
+            let _ = app_seg.emit(
+                "transcript-chunk",
+                serde_json::json!({
+                    "speaker": "You",
+                    "text": seg.text,
+                    "startMs": seg.start_ms,
+                    "endMs": seg.end_ms,
+                }),
+            );
+        },
+    )?;
+
+    *state.capture.lock().map_err(|e| e.to_string())? = Some(capture);
+    log("start_live_capture: running");
+    Ok(())
+}
+
+#[tauri::command]
+fn stop_live_capture(
+    app: AppHandle,
+    state: tauri::State<'_, LiveAudioState>,
+) -> Result<(), String> {
+    let capture = state
+        .capture
+        .lock()
+        .map_err(|e| e.to_string())?
+        .take();
+    if let Some(c) = capture {
+        c.stop();
+        log("stop_live_capture: stopped");
+    }
+    emit_phase(&app, "done", "Stopped");
+    schedule_close_recording_session(app, 800);
+    Ok(())
+}
+
+#[tauri::command]
 async fn record_and_transcribe(
     app: AppHandle,
     duration_secs: Option<u32>,
@@ -507,10 +582,24 @@ async fn record_and_transcribe(
 }
 
 fn emit_phase(app: &AppHandle, phase: &str, label: &str) {
+    if let Some(state) = app.try_state::<LiveAudioState>() {
+        if let Ok(mut guard) = state.phase.lock() {
+            *guard = (phase.to_string(), label.to_string());
+        }
+    }
     let _ = app.emit(
         "audio-phase",
         serde_json::json!({ "phase": phase, "label": label }),
     );
+}
+
+#[tauri::command]
+fn get_audio_phase(state: tauri::State<'_, LiveAudioState>) -> Result<(String, String), String> {
+    state
+        .phase
+        .lock()
+        .map(|g| g.clone())
+        .map_err(|e| e.to_string())
 }
 
 fn schedule_close_recording_session(app: AppHandle, delay_ms: u64) {
@@ -534,8 +623,8 @@ fn open_recording_session_window(app: &AppHandle) {
         .background_color(TRANSPARENT_BG)
         .always_on_top(true)
         .skip_taskbar(true)
-        .resizable(false)
-        .inner_size(360.0, 240.0)
+        .resizable(true)
+        .inner_size(480.0, 600.0)
         .center()
         .focused(false)
         .build()
@@ -1050,6 +1139,10 @@ pub fn run() {
         .manage(PaletteState {
             source_label: Mutex::new(None),
         })
+        .manage(LiveAudioState {
+            capture: Mutex::new(None),
+            phase: Mutex::new(("idle".to_string(), "Ready".to_string())),
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
@@ -1080,6 +1173,9 @@ pub fn run() {
             record_test_audio,
             transcribe_test_audio,
             record_and_transcribe,
+            start_live_capture,
+            stop_live_capture,
+            get_audio_phase,
         ])
         .setup(|app| {
             // Build the macOS menu bar

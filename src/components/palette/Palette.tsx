@@ -41,6 +41,12 @@ const ACTIONS: Action[] = [
 		description:
 			"Capture 5s of mic audio, run whisper (~39MB tiny.en model on first use), drop a sticky note",
 	},
+	{
+		id: "start_live_capture",
+		label: "Start live transcription",
+		description:
+			"Continuously transcribe mic input — watch chunks arrive in the recording window",
+	},
 ];
 
 function rank(query: string, action: Action): number {
@@ -102,6 +108,14 @@ export function Palette() {
 			invoke<string>("record_and_transcribe")
 				.then((text) => console.log("[audio] transcript:", text))
 				.catch((err) => console.error("[audio] failed:", err));
+			beginClose();
+			return;
+		}
+		if (id === "start_live_capture") {
+			console.log("[audio] starting live capture…");
+			invoke("start_live_capture").catch((err) =>
+				console.error("[audio] live capture failed:", err),
+			);
 			beginClose();
 			return;
 		}
