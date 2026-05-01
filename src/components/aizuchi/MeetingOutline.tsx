@@ -1,4 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useMemo, useState } from "react";
 import {
 	emptyGraph,
@@ -22,11 +23,15 @@ export function MeetingOutline() {
 	const [graph, setGraph] = useState<Graph>(emptyGraph);
 
 	useEffect(() => {
-		const unlisten = listen<Graph>("graph-update", (event) => {
+		const unlistenGraph = listen<Graph>("graph-update", (event) => {
 			setGraph(event.payload);
 		});
+		const unlistenClose = listen("meeting-close", () => {
+			getCurrentWindow().close().catch(() => {});
+		});
 		return () => {
-			unlisten.then((fn) => fn()).catch(() => {});
+			unlistenGraph.then((fn) => fn()).catch(() => {});
+			unlistenClose.then((fn) => fn()).catch(() => {});
 		};
 	}, []);
 

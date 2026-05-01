@@ -69,7 +69,8 @@ const edgeTypes = {
 
 function MeetingPrototype() {
 	useCommandPaletteHotkey();
-	const session = useMeetingSession();
+	const { id } = Route.useParams();
+	const session = useMeetingSession(id);
 
 	const { nodes, edges } = useMemo(
 		() => layoutGraph(session.graph, session.highlightIds),
@@ -95,6 +96,7 @@ function MeetingPrototype() {
 							error={session.error}
 							stats={session.stats}
 							generatingNotes={session.generatingNotes}
+							archivedAt={session.archivedAt}
 							onStartDemo={session.startDemo}
 							onStartLive={session.startLive}
 							onStopLive={session.stopLive}

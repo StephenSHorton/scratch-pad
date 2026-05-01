@@ -1,4 +1,5 @@
 mod audio;
+mod meetings;
 mod network;
 
 use chrono::{DateTime, Utc};
@@ -225,7 +226,11 @@ fn open_lobby_window(app: &AppHandle) {
         .ok();
 }
 
-fn open_meeting_window(app: &AppHandle) {
+fn open_meeting_window(app: &AppHandle, meeting_id: Option<&str>) {
+    let id = meeting_id.unwrap_or("test");
+    let graph_label = format!("meeting-{id}");
+    let outline_label = format!("meeting-outline-{id}");
+
     // Compute monitor-relative geometry so the graph + outline windows
     // are paired on-screen with safe edge margins and reasonable caps.
     let (sw, sh, sx, sy) = match app.primary_monitor() {
@@ -256,13 +261,13 @@ fn open_meeting_window(app: &AppHandle) {
     let x_outline = x_graph + graph_w + gap;
     let y = sy + (sh - total_h) / 2.0;
 
-    if let Some(window) = app.get_webview_window("meeting-test") {
+    if let Some(window) = app.get_webview_window(&graph_label) {
         window.set_focus().ok();
     } else {
         WebviewWindowBuilder::new(
             app,
-            "meeting-test",
-            WebviewUrl::App("meeting/test".into()),
+            &graph_label,
+            WebviewUrl::App(format!("meeting/{id}").into()),
         )
         .title("Aizuchi — meeting prototype")
         .inner_size(graph_w, total_h)
@@ -271,10 +276,10 @@ fn open_meeting_window(app: &AppHandle) {
         .ok();
     }
 
-    if let Some(window) = app.get_webview_window("meeting-outline-test") {
+    if let Some(window) = app.get_webview_window(&outline_label) {
         window.set_focus().ok();
     } else {
-        WebviewWindowBuilder::new(app, "meeting-outline-test", WebviewUrl::default())
+        WebviewWindowBuilder::new(app, &outline_label, WebviewUrl::default())
             .title("Aizuchi — outline")
             .inner_size(outline_w, total_h)
             .position(x_outline, y)
@@ -434,9 +439,33 @@ fn dispatch_action(app: AppHandle, id: String, state: tauri::State<'_, NotesStat
         "organize" => organize_windows(&app, &state),
         "show_logs" => open_logs_window(&app),
         "lobby" => open_lobby_window(&app),
-        "aizuchi" => open_meeting_window(&app),
+        "aizuchi" => open_meeting_window(&app, None),
         _ => log(&format!("dispatch_action: unknown id {id}")),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Meeting persistence commands (AIZ-11)
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn save_meeting(snapshot: serde_json::Value) -> Result<String, String> {
+    meetings::save_snapshot(&notes_dir(), snapshot)
+}
+
+#[tauri::command]
+fn list_meetings() -> Result<Vec<meetings::MeetingMeta>, String> {
+    meetings::list_snapshots(&notes_dir())
+}
+
+#[tauri::command]
+fn load_meeting(id: String) -> Result<serde_json::Value, String> {
+    meetings::load_snapshot(&notes_dir(), &id)
+}
+
+#[tauri::command]
+fn open_meeting(app: AppHandle, id: Option<String>) {
+    open_meeting_window(&app, id.as_deref());
 }
 
 // ---------------------------------------------------------------------------
@@ -1183,6 +1212,10 @@ pub fn run() {
             start_live_capture,
             stop_live_capture,
             get_audio_phase,
+            save_meeting,
+            list_meetings,
+            load_meeting,
+            open_meeting,
         ])
         .setup(|app| {
             // Build the macOS menu bar
@@ -1269,7 +1302,7 @@ pub fn run() {
                     }
                     "show_logs" => open_logs_window(&handle),
                     "lobby" | "tray_lobby" => open_lobby_window(&handle),
-                    "tray_aizuchi" => open_meeting_window(&handle),
+                    "tray_aizuchi" => open_meeting_window(&handle, None),
                     "always_on_top" => {
                         let on_top = {
                             let settings_state = handle.state::<SettingsState>();

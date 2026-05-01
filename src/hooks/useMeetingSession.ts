@@ -18,6 +18,13 @@ import { standupTranscript } from "@/lib/aizuchi/fixtures/standup-transcript";
 import { mutateGraph } from "@/lib/aizuchi/graph-mutation";
 import { generateMeetingNotes } from "@/lib/aizuchi/meeting-notes";
 import {
+	buildSnapshot,
+	loadSnapshot,
+	type MeetingSnapshot,
+	newMeetingId,
+	saveSnapshot,
+} from "@/lib/aizuchi/persistence";
+import {
 	type AIThought,
 	type AIThoughtRecord,
 	applyDiff,
@@ -48,7 +55,8 @@ export type Status =
 	| "updated"
 	| "paused"
 	| "done"
-	| "error";
+	| "error"
+	| "archived";
 
 export type Mode = "idle" | "demo" | "live";
 
@@ -81,6 +89,7 @@ export interface MeetingSession {
 	transcriptOpen: boolean;
 	setTranscriptOpen: Dispatch<SetStateAction<boolean>>;
 	generatingNotes: boolean;
+	archivedAt: number | null;
 	startDemo: () => Promise<void>;
 	startLive: () => Promise<void>;
 	stopLive: () => Promise<void>;
@@ -90,7 +99,15 @@ export interface MeetingSession {
 	generateNotes: () => Promise<void>;
 }
 
-export function useMeetingSession(): MeetingSession {
+/**
+ * The session hook. `meetingId` is the route's $id param.
+ * - id === "test" → live/demo entry; never tries to load a snapshot
+ * - any other id → tries `load_meeting(id)` on mount; on success the
+ *   hook hydrates and switches to `archived` status (read-only viewing)
+ */
+export function useMeetingSession(meetingId: string): MeetingSession {
+	const outlineLabel = `meeting-outline-${meetingId}`;
+
 	const [graph, setGraph] = useState<Graph>(emptyGraph);
 	const [status, setStatus] = useState<Status>("idle");
 	const [batchIdx, setBatchIdx] = useState(0);
@@ -104,13 +121,19 @@ export function useMeetingSession(): MeetingSession {
 	const [passes, setPasses] = useState<PassRecord[]>([]);
 	const [mode, setMode] = useState<Mode>("idle");
 	const [generatingNotes, setGeneratingNotes] = useState(false);
+	const [archivedAt, setArchivedAt] = useState<number | null>(null);
 
 	const consumedChunksRef = useRef(0);
 	const thoughtsRef = useRef<AIThoughtRecord[]>([]);
 	const transcriptRef = useRef<TranscriptChunk[]>([]);
+	const graphRef = useRef<Graph>(emptyGraph());
+	const passesRef = useRef<PassRecord[]>([]);
+	const statsRef = useRef<RunStats>(INITIAL_STATS);
 	const signalRef = useRef<FeederSignal>({ cancelled: false, paused: false });
 	const runningRef = useRef(false);
 	const modeRef = useRef<Mode>("idle");
+	const meetingIdRef = useRef<string>(meetingId);
+	const startedAtRef = useRef<number>(Date.now());
 
 	useEffect(() => {
 		return () => {
@@ -140,27 +163,38 @@ export function useMeetingSession(): MeetingSession {
 		);
 	};
 
+	// Refs are kept in lockstep with state so saveCurrentMeeting can read
+	// the latest values without waiting for React's effect flush.
+	const updateGraph = (g: Graph) => {
+		graphRef.current = g;
+		setGraph(g);
+	};
+
+	const updateStats = (s: RunStats) => {
+		statsRef.current = s;
+		setStats(s);
+	};
+
 	const recordPass = (
 		idx: number,
 		consumedChunks: number,
 		thoughts: AIThought[],
 	) => {
 		const atChunkIdx = Math.max(consumedChunks - 1, 0);
-		setPasses((p) => [
-			...p,
-			{
-				id: `pass-${idx}-${Date.now()}`,
-				batchIdx: idx,
-				atChunkIdx,
-				thoughts,
-				timestamp: Date.now(),
-			},
-		]);
+		const next: PassRecord = {
+			id: `pass-${idx}-${Date.now()}`,
+			batchIdx: idx,
+			atChunkIdx,
+			thoughts,
+			timestamp: Date.now(),
+		};
+		passesRef.current = [...passesRef.current, next];
+		setPasses(passesRef.current);
 	};
 
 	const emitGraph = (g: Graph) => {
 		getCurrentWindow()
-			.emitTo("meeting-outline-test", "graph-update", g)
+			.emitTo(outlineLabel, "graph-update", g)
 			.catch(() => {});
 	};
 
@@ -170,20 +204,98 @@ export function useMeetingSession(): MeetingSession {
 		signalRef.current = { cancelled: false, paused: false };
 
 		const startGraph = emptyGraph();
+		graphRef.current = startGraph;
+		passesRef.current = [];
+		statsRef.current = INITIAL_STATS;
+		transcriptRef.current = [];
+		thoughtsRef.current = [];
+		consumedChunksRef.current = 0;
 		setGraph(startGraph);
 		setBatchIdx(0);
 		setHighlightIds(new Set());
 		setError(null);
 		setStats(INITIAL_STATS);
-		transcriptRef.current = [];
 		setTranscript([]);
-		thoughtsRef.current = [];
 		setPasses([]);
-		consumedChunksRef.current = 0;
+		setArchivedAt(null);
 		setStatus("listening");
 		emitGraph(startGraph);
 		return startGraph;
 	};
+
+	const saveCurrentMeeting = async (savedMode: "demo" | "live") => {
+		// Skip empty meetings — clicking Stop right after Start shouldn't
+		// litter the meetings dir.
+		if (
+			transcriptRef.current.length === 0 &&
+			graphRef.current.nodes.length === 0
+		) {
+			return null;
+		}
+		try {
+			const snap = buildSnapshot({
+				id: meetingIdRef.current,
+				mode: savedMode,
+				startedAt: startedAtRef.current,
+				graph: graphRef.current,
+				thoughts: thoughtsRef.current,
+				transcript: transcriptRef.current,
+				passes: passesRef.current,
+				stats: statsRef.current,
+			});
+			const id = await saveSnapshot(snap);
+			console.log(`[meeting] saved snapshot ${id}`);
+			return id;
+		} catch (err) {
+			console.error("[meeting] save failed", err);
+			return null;
+		}
+	};
+
+	const hydrateFromSnapshot = (snap: MeetingSnapshot) => {
+		meetingIdRef.current = snap.id;
+		startedAtRef.current = snap.startedAt;
+		graphRef.current = snap.graph;
+		passesRef.current = snap.passes;
+		statsRef.current = snap.stats;
+		thoughtsRef.current = snap.thoughts;
+		transcriptRef.current = snap.transcript;
+		consumedChunksRef.current = snap.transcript.length;
+		setGraph(snap.graph);
+		setPasses(snap.passes);
+		setStats(snap.stats);
+		setTranscript(snap.transcript);
+		setBatchIdx(snap.stats.totalBatches);
+		const nextMode: Mode = snap.mode === "demo" ? "demo" : "live";
+		setMode(nextMode);
+		modeRef.current = nextMode;
+		setStatus("archived");
+		setArchivedAt(snap.endedAt);
+		// The outline window may mount after us — retry the graph emit a
+		// few times so it picks up the saved state regardless of order.
+		[200, 700, 1500].forEach((d) =>
+			setTimeout(() => emitGraph(snap.graph), d),
+		);
+	};
+
+	useEffect(() => {
+		// "test" is reserved for the live/demo entry — never try to load
+		// it as an archived snapshot.
+		if (meetingId === "test") return;
+		let cancelled = false;
+		loadSnapshot(meetingId)
+			.then((snap) => {
+				if (cancelled) return;
+				hydrateFromSnapshot(snap);
+			})
+			.catch((err) => {
+				console.warn(`[meeting] no snapshot for ${meetingId}:`, err);
+			});
+		return () => {
+			cancelled = true;
+		};
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [meetingId]);
 
 	const runSession = async (
 		source: AsyncIterable<Batch>,
@@ -229,22 +341,23 @@ export function useMeetingSession(): MeetingSession {
 				for (const u of result.diff.update_nodes) changed.add(u.id);
 
 				current = next;
-				setGraph(next);
+				updateGraph(next);
 				emitGraph(next);
 				applyThoughts(result.diff.notes);
 				consumedChunksRef.current += batch.chunks.length;
 				recordPass(idx, consumedChunksRef.current, result.diff.notes);
 				setHighlightIds(changed);
 				setStatus("updated");
-				setStats((s) => ({
+				updateStats({
 					totalBatches: idx,
-					totalLatencyMs: s.totalLatencyMs + result.latencyMs,
+					totalLatencyMs: statsRef.current.totalLatencyMs + result.latencyMs,
 					totalInputTokens:
-						s.totalInputTokens + (result.usage?.inputTokens ?? 0),
+						statsRef.current.totalInputTokens + (result.usage?.inputTokens ?? 0),
 					totalOutputTokens:
-						s.totalOutputTokens + (result.usage?.outputTokens ?? 0),
+						statsRef.current.totalOutputTokens +
+						(result.usage?.outputTokens ?? 0),
 					providerLabel: result.providerLabel,
-				}));
+				});
 
 				await new Promise((r) => setTimeout(r, HIGHLIGHT_MS));
 				if (signal.cancelled) return;
@@ -252,7 +365,10 @@ export function useMeetingSession(): MeetingSession {
 			}
 			// Demo iterates a finite fixture and reaches "done"; live streams
 			// indefinitely and is ended via stopLive().
-			if (!signal.cancelled && nextMode === "demo") setStatus("done");
+			if (!signal.cancelled && nextMode === "demo") {
+				await saveCurrentMeeting("demo");
+				setStatus("done");
+			}
 		} catch (err) {
 			if (signal.cancelled) return;
 			console.error(
@@ -270,6 +386,8 @@ export function useMeetingSession(): MeetingSession {
 		if (runningRef.current) return;
 		runningRef.current = true;
 		const startGraph = resetSessionState("demo");
+		meetingIdRef.current = newMeetingId();
+		startedAtRef.current = Date.now();
 		const source = feedTranscriptBatches(standupTranscript, {
 			sizeThresholdWords: SIZE_THRESHOLD_WORDS,
 			timeThresholdMs: TIME_THRESHOLD_MS,
@@ -284,6 +402,8 @@ export function useMeetingSession(): MeetingSession {
 		if (runningRef.current) return;
 		runningRef.current = true;
 		const startGraph = resetSessionState("live");
+		meetingIdRef.current = newMeetingId();
+		startedAtRef.current = Date.now();
 
 		try {
 			await invoke("start_live_capture");
@@ -328,12 +448,25 @@ export function useMeetingSession(): MeetingSession {
 		signalRef.current.cancelled = true;
 		runningRef.current = false;
 		await invoke("stop_live_capture").catch(() => {});
+		await saveCurrentMeeting("live");
 		setMode("idle");
 		modeRef.current = "idle";
 		setStatus("done");
 	};
 
+	const closeMeetingWindows = () => {
+		const win = getCurrentWindow();
+		win.emitTo(outlineLabel, "meeting-close", null).catch(() => {});
+		win.close().catch(() => {});
+	};
+
 	const resetDemo = () => {
+		// Archived view: Reset is repurposed to "Close" — close the
+		// meeting + outline windows for this id.
+		if (status === "archived") {
+			closeMeetingWindows();
+			return;
+		}
 		signalRef.current.cancelled = true;
 		signalRef.current.paused = false;
 		runningRef.current = false;
@@ -343,16 +476,20 @@ export function useMeetingSession(): MeetingSession {
 		setMode("idle");
 		modeRef.current = "idle";
 		const empty = emptyGraph();
+		graphRef.current = empty;
+		passesRef.current = [];
+		statsRef.current = INITIAL_STATS;
+		transcriptRef.current = [];
+		thoughtsRef.current = [];
+		consumedChunksRef.current = 0;
 		setGraph(empty);
 		setBatchIdx(0);
 		setHighlightIds(new Set());
 		setError(null);
 		setStats(INITIAL_STATS);
-		transcriptRef.current = [];
 		setTranscript([]);
-		thoughtsRef.current = [];
 		setPasses([]);
-		consumedChunksRef.current = 0;
+		setArchivedAt(null);
 		setStatus("idle");
 		emitGraph(empty);
 	};
@@ -400,6 +537,7 @@ export function useMeetingSession(): MeetingSession {
 		transcriptOpen,
 		setTranscriptOpen,
 		generatingNotes,
+		archivedAt,
 		startDemo,
 		startLive,
 		stopLive,

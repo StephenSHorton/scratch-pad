@@ -11,6 +11,7 @@ export function MeetingStatusPanel({
 	error,
 	stats,
 	generatingNotes,
+	archivedAt,
 	onStartDemo,
 	onStartLive,
 	onStopLive,
@@ -27,6 +28,7 @@ export function MeetingStatusPanel({
 	error: string | null;
 	stats: RunStats;
 	generatingNotes: boolean;
+	archivedAt: number | null;
 	onStartDemo: () => void;
 	onStartLive: () => void;
 	onStopLive: () => void;
@@ -35,6 +37,8 @@ export function MeetingStatusPanel({
 	onReset: () => void;
 	onGenerateNotes: () => void;
 }) {
+	const isArchived = status === "archived";
+
 	const dot =
 		status === "listening"
 			? "bg-amber-500 animate-pulse"
@@ -48,7 +52,9 @@ export function MeetingStatusPanel({
 							? "bg-sky-500"
 							: status === "error"
 								? "bg-red-500"
-								: "bg-muted-foreground";
+								: status === "archived"
+									? "bg-zinc-400"
+									: "bg-muted-foreground";
 
 	const label =
 		status === "listening"
@@ -63,26 +69,50 @@ export function MeetingStatusPanel({
 							? "transcript complete"
 							: status === "error"
 								? "error"
-								: "idle";
+								: status === "archived"
+									? "viewing"
+									: "idle";
 
 	const isRunning =
 		status === "listening" || status === "thinking" || status === "updated";
-	const canStart = status === "idle" || status === "done" || status === "error";
+	const canStart =
+		!isArchived &&
+		(status === "idle" || status === "done" || status === "error");
 	const isLive = mode === "live";
 	const isDemo = mode === "demo";
+
+	const archivedLabel = archivedAt
+		? new Date(archivedAt).toLocaleString(undefined, {
+				weekday: "short",
+				month: "short",
+				day: "numeric",
+				hour: "numeric",
+				minute: "2-digit",
+			})
+		: null;
 
 	return (
 		<div className="flex min-w-[280px] flex-col gap-2 px-3 py-2 text-xs">
 			<div className="flex items-center gap-2">
 				<span className={`size-2 rounded-full ${dot}`} />
 				<span className="font-medium">{label}</span>
-				{mode !== "idle" && (
+				{mode !== "idle" && !isArchived && (
 					<span className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
 						{mode}
 					</span>
 				)}
+				{isArchived && (
+					<span className="rounded-sm bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300">
+						archived
+					</span>
+				)}
 				<span className="ml-auto text-muted-foreground">batch {batchIdx}</span>
 			</div>
+			{isArchived && archivedLabel && (
+				<div className="text-[11px] text-muted-foreground">
+					Archived — {archivedLabel}
+				</div>
+			)}
 			<div className="text-muted-foreground">
 				{graph.nodes.length} nodes · {graph.edges.length} edges
 				{mode === "live" && (
@@ -148,6 +178,15 @@ export function MeetingStatusPanel({
 						className="rounded-md bg-secondary px-2.5 py-1 text-xs font-medium text-secondary-foreground hover:bg-secondary/80"
 					>
 						Reset
+					</button>
+				)}
+				{isArchived && (
+					<button
+						type="button"
+						onClick={onReset}
+						className="rounded-md bg-secondary px-2.5 py-1 text-xs font-medium text-secondary-foreground hover:bg-secondary/80"
+					>
+						Close
 					</button>
 				)}
 			</div>

@@ -2,6 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+	listSnapshots,
+	openMeetingWindow,
+} from "@/lib/aizuchi/persistence";
 
 interface Action {
 	id: string;
@@ -14,6 +18,12 @@ const ACTIONS: Action[] = [
 		id: "aizuchi",
 		label: "Start a meeting",
 		description: "Open the Aizuchi mind-map window",
+	},
+	{
+		id: "open_last_meeting",
+		label: "Open last meeting",
+		description:
+			"Reopen the most recent saved meeting in archived (read-only) mode",
 	},
 	{
 		id: "new_pad",
@@ -116,6 +126,21 @@ export function Palette() {
 			invoke("start_live_capture").catch((err) =>
 				console.error("[audio] live capture failed:", err),
 			);
+			beginClose();
+			return;
+		}
+		if (id === "open_last_meeting") {
+			try {
+				const meetings = await listSnapshots();
+				const latest = meetings[0];
+				if (!latest) {
+					console.warn("[meeting] no saved meetings yet");
+				} else {
+					await openMeetingWindow(latest.id);
+				}
+			} catch (err) {
+				console.error("[meeting] open last failed:", err);
+			}
 			beginClose();
 			return;
 		}
