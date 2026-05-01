@@ -5,12 +5,18 @@ import {
 	type Node as RFNode,
 	ReactFlowProvider,
 } from "@xyflow/react";
+import { ChevronUpIcon } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Canvas } from "@/components/ai-elements/canvas";
 import { Edge as AIEdge } from "@/components/ai-elements/edge";
 import { Panel } from "@/components/ai-elements/panel";
 import { useCommandPaletteHotkey } from "@/hooks/useCommandPaletteHotkey";
-import { batchTranscript, formatChunkBatch } from "@/lib/aizuchi/batcher";
+import { formatChunkBatch } from "@/lib/aizuchi/batcher";
+import {
+	type FeederSignal,
+	feedTranscriptBatches,
+} from "@/lib/aizuchi/feeder";
 import { standupTranscript } from "@/lib/aizuchi/fixtures/standup-transcript";
 import { mutateGraph } from "@/lib/aizuchi/graph-mutation";
 import {
@@ -20,12 +26,14 @@ import {
 	type Graph,
 	type Node as AzNode,
 	type NodeType,
+	type TranscriptChunk,
 } from "@/lib/aizuchi/schemas";
 import { AizuchiNode } from "@/components/aizuchi/aizuchi-node";
 
 const SIZE_THRESHOLD_WORDS = 60;
 const TIME_THRESHOLD_MS = 25_000;
 const HIGHLIGHT_MS = 1500;
+const SPEED_MULTIPLIER = 4;
 
 const COLUMN_X: Record<NodeType, number> = {
 	person: 0,
@@ -104,8 +112,9 @@ function MeetingPrototype() {
 	);
 	const [error, setError] = useState<string | null>(null);
 	const [stats, setStats] = useState<RunStats>(INITIAL_STATS);
-	const cancelledRef = useRef(false);
-	const pausedRef = useRef(false);
+	const [transcript, setTranscript] = useState<TranscriptChunk[]>([]);
+	const [transcriptOpen, setTranscriptOpen] = useState(false);
+	const signalRef = useRef<FeederSignal>({ cancelled: false, paused: false });
 	const runningRef = useRef(false);
 
 	useCommandPaletteHotkey();
@@ -119,8 +128,7 @@ function MeetingPrototype() {
 	const startDemo = async () => {
 		if (runningRef.current) return;
 		runningRef.current = true;
-		cancelledRef.current = false;
-		pausedRef.current = false;
+		signalRef.current = { cancelled: false, paused: false };
 
 		const startGraph = emptyGraph();
 		setGraph(startGraph);
@@ -128,29 +136,29 @@ function MeetingPrototype() {
 		setHighlightIds(new Set());
 		setError(null);
 		setStats(INITIAL_STATS);
+		setTranscript([]);
 		setStatus("listening");
 		emitGraph(startGraph);
 
 		let current: Graph = startGraph;
 		let idx = 0;
+		const signal = signalRef.current;
 		try {
-			for (const batch of batchTranscript(
-				standupTranscript,
-				SIZE_THRESHOLD_WORDS,
-				TIME_THRESHOLD_MS,
-			)) {
-				if (cancelledRef.current) return;
-				while (pausedRef.current) {
-					await new Promise((r) => setTimeout(r, 100));
-					if (cancelledRef.current) return;
-				}
+			for await (const batch of feedTranscriptBatches(standupTranscript, {
+				sizeThresholdWords: SIZE_THRESHOLD_WORDS,
+				timeThresholdMs: TIME_THRESHOLD_MS,
+				speedMultiplier: SPEED_MULTIPLIER,
+				signal,
+				onChunk: (chunk) => setTranscript((t) => [...t, chunk]),
+			})) {
+				if (signal.cancelled) return;
 
 				idx++;
 				setBatchIdx(idx);
 				setStatus("listening");
 
 				const result = await mutateGraph(current, formatChunkBatch(batch));
-				if (cancelledRef.current) return;
+				if (signal.cancelled) return;
 
 				const next = applyDiff(current, result.diff);
 				const changed = new Set<string>();
@@ -172,12 +180,12 @@ function MeetingPrototype() {
 				}));
 
 				await new Promise((r) => setTimeout(r, HIGHLIGHT_MS));
-				if (cancelledRef.current) return;
+				if (signal.cancelled) return;
 				setHighlightIds(new Set());
 			}
-			if (!cancelledRef.current) setStatus("done");
+			if (!signal.cancelled) setStatus("done");
 		} catch (err) {
-			if (cancelledRef.current) return;
+			if (signal.cancelled) return;
 			console.error("Aizuchi batch failed", err);
 			setError(err instanceof Error ? err.message : String(err));
 			setStatus("error");
@@ -188,19 +196,19 @@ function MeetingPrototype() {
 
 	const pauseDemo = () => {
 		if (!runningRef.current) return;
-		pausedRef.current = true;
+		signalRef.current.paused = true;
 		setStatus("paused");
 	};
 
 	const resumeDemo = () => {
 		if (!runningRef.current) return;
-		pausedRef.current = false;
+		signalRef.current.paused = false;
 		setStatus("listening");
 	};
 
 	const resetDemo = () => {
-		cancelledRef.current = true;
-		pausedRef.current = false;
+		signalRef.current.cancelled = true;
+		signalRef.current.paused = false;
 		runningRef.current = false;
 		const empty = emptyGraph();
 		setGraph(empty);
@@ -208,13 +216,14 @@ function MeetingPrototype() {
 		setHighlightIds(new Set());
 		setError(null);
 		setStats(INITIAL_STATS);
+		setTranscript([]);
 		setStatus("idle");
 		emitGraph(empty);
 	};
 
 	useEffect(() => {
 		return () => {
-			cancelledRef.current = true;
+			signalRef.current.cancelled = true;
 		};
 	}, []);
 
@@ -245,6 +254,15 @@ function MeetingPrototype() {
 							onReset={resetDemo}
 						/>
 					</Panel>
+					{transcript.length > 0 && (
+						<Panel position="bottom-center">
+							<LiveTranscript
+								chunks={transcript}
+								open={transcriptOpen}
+								onToggle={() => setTranscriptOpen((v) => !v)}
+							/>
+						</Panel>
+					)}
 				</Canvas>
 			</ReactFlowProvider>
 		</div>
@@ -356,7 +374,8 @@ function StatusPanel({
 			{status === "idle" && (
 				<div className="rounded border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] text-amber-700 dark:text-amber-300">
 					Audio capture not yet wired — this replays a canned standup
-					transcript through the graph-mutation loop.
+					transcript at {SPEED_MULTIPLIER}× speed through the graph-mutation
+					loop.
 				</div>
 			)}
 			{stats.providerLabel && (
@@ -380,6 +399,87 @@ function StatusPanel({
 				</div>
 			)}
 		</div>
+	);
+}
+
+function LiveTranscript({
+	chunks,
+	open,
+	onToggle,
+}: {
+	chunks: TranscriptChunk[];
+	open: boolean;
+	onToggle: () => void;
+}) {
+	const last = chunks[chunks.length - 1];
+	const scrollRef = useRef<HTMLDivElement>(null);
+
+	useEffect(() => {
+		if (open && scrollRef.current) {
+			scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+		}
+	}, [chunks.length, open]);
+
+	if (!last) return null;
+
+	return (
+		<motion.div
+			layout
+			className="w-[min(800px,80vw)] overflow-hidden rounded-md bg-background/85 shadow-md backdrop-blur"
+		>
+			<AnimatePresence initial={false}>
+				{open && (
+					<motion.div
+						key="history"
+						initial={{ height: 0, opacity: 0 }}
+						animate={{ height: "auto", opacity: 1 }}
+						exit={{ height: 0, opacity: 0 }}
+						transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
+						className="overflow-hidden"
+					>
+						<div
+							ref={scrollRef}
+							className="max-h-[40vh] space-y-2 overflow-y-auto border-b border-border/40 px-4 py-3"
+						>
+							{chunks.map((chunk, i) => (
+								<div
+									key={`${chunk.startMs}-${i}`}
+									className={`text-sm leading-snug ${
+										i === chunks.length - 1 ? "" : "text-muted-foreground"
+									}`}
+								>
+									<span className="mr-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+										{chunk.speaker}
+									</span>
+									<span>{chunk.text}</span>
+								</div>
+							))}
+						</div>
+					</motion.div>
+				)}
+			</AnimatePresence>
+
+			<button
+				type="button"
+				onClick={onToggle}
+				className="flex w-full items-center gap-3 px-4 py-2 text-left transition-colors hover:bg-muted/40"
+			>
+				<div className="flex-1 overflow-hidden">
+					<span className="mr-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+						{last.speaker}
+					</span>
+					<span className="text-sm text-foreground">{last.text}</span>
+				</div>
+				<span className="shrink-0 text-[10px] uppercase tracking-wider text-muted-foreground">
+					{chunks.length} chunk{chunks.length === 1 ? "" : "s"}
+				</span>
+				<ChevronUpIcon
+					className={`size-4 shrink-0 text-muted-foreground transition-transform duration-200 ${
+						open ? "rotate-180" : ""
+					}`}
+				/>
+			</button>
+		</motion.div>
 	);
 }
 
