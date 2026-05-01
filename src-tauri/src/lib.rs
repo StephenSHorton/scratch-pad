@@ -203,20 +203,61 @@ fn open_lobby_window(app: &AppHandle) {
 }
 
 fn open_meeting_window(app: &AppHandle) {
+    // Compute monitor-relative geometry so the graph + outline windows
+    // are paired on-screen with safe edge margins and reasonable caps.
+    let (sw, sh, sx, sy) = match app.primary_monitor() {
+        Ok(Some(m)) => {
+            let size = m.size();
+            let pos = m.position();
+            let scale = m.scale_factor();
+            (
+                size.width as f64 / scale,
+                size.height as f64 / scale,
+                pos.x as f64 / scale,
+                pos.y as f64 / scale,
+            )
+        }
+        _ => (1440.0, 900.0, 0.0, 0.0),
+    };
+
+    let margin = (sw * 0.05).max(40.0);
+    let avail_w = (sw - 2.0 * margin).max(960.0);
+    let total_h = (sh * 0.85).min(1000.0);
+    let gap = 16.0;
+
+    let outline_w = (avail_w * 0.28).clamp(360.0, 480.0);
+    let graph_w = (avail_w - outline_w - gap).min(1400.0);
+    let pair_w = graph_w + gap + outline_w;
+
+    let x_graph = sx + (sw - pair_w) / 2.0;
+    let x_outline = x_graph + graph_w + gap;
+    let y = sy + (sh - total_h) / 2.0;
+
     if let Some(window) = app.get_webview_window("meeting-test") {
         window.set_focus().ok();
-        return;
+    } else {
+        WebviewWindowBuilder::new(
+            app,
+            "meeting-test",
+            WebviewUrl::App("meeting/test".into()),
+        )
+        .title("Aizuchi — meeting prototype")
+        .inner_size(graph_w, total_h)
+        .position(x_graph, y)
+        .build()
+        .ok();
     }
-    WebviewWindowBuilder::new(
-        app,
-        "meeting-test",
-        WebviewUrl::App("meeting/test".into()),
-    )
-    .title("Aizuchi — meeting prototype")
-    .inner_size(1400.0, 900.0)
-    .center()
-    .build()
-    .ok();
+
+    if let Some(window) = app.get_webview_window("meeting-outline-test") {
+        window.set_focus().ok();
+    } else {
+        WebviewWindowBuilder::new(app, "meeting-outline-test", WebviewUrl::default())
+            .title("Aizuchi — outline")
+            .inner_size(outline_w, total_h)
+            .position(x_outline, y)
+            .build()
+            .ok();
+    }
 }
 
 fn open_palette_window(app: &AppHandle) {
