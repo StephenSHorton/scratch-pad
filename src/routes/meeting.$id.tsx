@@ -89,10 +89,14 @@ function MeetingPrototype() {
 		const params = new URLSearchParams(window.location.search);
 		const autostart = params.get("autostart");
 		if (autostart !== "live" && autostart !== "demo") return;
-		autostartFiredRef.current = true;
 		// Defer so the session hook has finished its initial setup. The
-		// hook also guards against double-start via runningRef.
+		// hook also guards against double-start via runningRef. Set the
+		// fired-ref *inside* the timeout, not before — under React strict
+		// mode the effect runs twice with a cleanup in between, and the
+		// cleanup clears the pending timeout. If we set the ref up front,
+		// the second run sees ref=true and bails, so startDemo never fires.
 		const handle = setTimeout(() => {
+			autostartFiredRef.current = true;
 			if (autostart === "live") {
 				session.startLive().catch((err) => {
 					console.error("[meeting] autostart live failed", err);
