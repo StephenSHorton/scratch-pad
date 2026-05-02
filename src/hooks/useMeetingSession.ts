@@ -544,7 +544,13 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		if (runningRef.current) return;
 		runningRef.current = true;
 		const startGraph = resetSessionState("demo");
-		meetingIdRef.current = newMeetingId();
+		// AIZ-26 — adopt the route's `:id` so CLI flows
+		// (`meeting start` → `meeting stop` / `meeting open`) line up with
+		// the snapshot file on disk. Only mint a fresh id when the route is
+		// the placeholder ("test"), which is what the palette / tray /
+		// `dispatch_action("aizuchi")` paths use today (they open
+		// `meeting/test` with no autostart and let the user click Start).
+		meetingIdRef.current = meetingId === "test" ? newMeetingId() : meetingId;
 		startedAtRef.current = Date.now();
 		sessionSavedRef.current = false;
 		const source = feedTranscriptBatches(standupTranscript, {
@@ -593,7 +599,8 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		if (runningRef.current) return;
 		runningRef.current = true;
 		const startGraph = resetSessionState("live");
-		meetingIdRef.current = newMeetingId();
+		// AIZ-26 — adopt the route's `:id` (see `startDemo` for rationale).
+		meetingIdRef.current = meetingId === "test" ? newMeetingId() : meetingId;
 		startedAtRef.current = Date.now();
 		sessionSavedRef.current = false;
 		await _startLiveCore({ startGraph, chunkOffsetMs: 0 });
