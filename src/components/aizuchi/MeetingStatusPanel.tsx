@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import type { Mode, RunStats, Status } from "@/hooks/useMeetingSession";
 import { SPEED_MULTIPLIER } from "@/hooks/useMeetingSession";
 import type { Graph } from "@/lib/aizuchi/schemas";
@@ -12,6 +13,9 @@ export function MeetingStatusPanel({
 	stats,
 	generatingNotes,
 	archivedAt,
+	name,
+	nameLockedByUser,
+	onSetName,
 	onStartDemo,
 	onStartLive,
 	onResumeLive,
@@ -30,6 +34,9 @@ export function MeetingStatusPanel({
 	stats: RunStats;
 	generatingNotes: boolean;
 	archivedAt: number | null;
+	name: string | null;
+	nameLockedByUser: boolean;
+	onSetName: (name: string) => void;
 	onStartDemo: () => void;
 	onStartLive: () => void;
 	onResumeLive: () => void;
@@ -95,6 +102,11 @@ export function MeetingStatusPanel({
 
 	return (
 		<div className="flex min-w-[280px] flex-col gap-2 px-3 py-2 text-xs">
+			<MeetingNameField
+				name={name}
+				nameLockedByUser={nameLockedByUser}
+				onSetName={onSetName}
+			/>
 			<div className="flex items-center gap-2">
 				<span className={`size-2 rounded-full ${dot}`} />
 				<span className="font-medium">{label}</span>
@@ -244,5 +256,85 @@ export function MeetingStatusPanel({
 				</div>
 			)}
 		</div>
+	);
+}
+
+// AIZ-16 — inline-editable meeting name. Click-to-edit, Enter to commit,
+// Esc to cancel. Visually matches the rest of the panel: single line, no modal.
+function MeetingNameField({
+	name,
+	nameLockedByUser,
+	onSetName,
+}: {
+	name: string | null;
+	nameLockedByUser: boolean;
+	onSetName: (name: string) => void;
+}) {
+	const [editing, setEditing] = useState(false);
+	const [draft, setDraft] = useState(name ?? "");
+	const inputRef = useRef<HTMLInputElement | null>(null);
+
+	useEffect(() => {
+		if (editing) return;
+		setDraft(name ?? "");
+	}, [name, editing]);
+
+	useEffect(() => {
+		if (editing) {
+			inputRef.current?.focus();
+			inputRef.current?.select();
+		}
+	}, [editing]);
+
+	const commit = () => {
+		const trimmed = draft.trim();
+		if (trimmed && trimmed !== name) onSetName(trimmed);
+		setEditing(false);
+	};
+
+	const cancel = () => {
+		setDraft(name ?? "");
+		setEditing(false);
+	};
+
+	if (editing) {
+		return (
+			<input
+				ref={inputRef}
+				type="text"
+				value={draft}
+				onChange={(e) => setDraft(e.target.value)}
+				onBlur={commit}
+				onKeyDown={(e) => {
+					if (e.key === "Enter") {
+						e.preventDefault();
+						commit();
+					} else if (e.key === "Escape") {
+						e.preventDefault();
+						cancel();
+					}
+				}}
+				placeholder="Untitled meeting"
+				className="w-full rounded border border-border bg-background px-1.5 py-0.5 text-sm font-medium outline-none focus:border-primary"
+			/>
+		);
+	}
+
+	const displayName = name ?? "Untitled meeting";
+	const isPlaceholder = !name;
+
+	return (
+		<button
+			type="button"
+			onClick={() => setEditing(true)}
+			title={
+				nameLockedByUser ? "Custom name (click to edit)" : "Click to rename"
+			}
+			className={`-mx-1 truncate rounded px-1 py-0.5 text-left text-sm font-medium hover:bg-muted/50 ${
+				isPlaceholder ? "text-muted-foreground italic" : "text-foreground"
+			}`}
+		>
+			{displayName}
+		</button>
 	);
 }
