@@ -1,10 +1,11 @@
 import { createFileRoute, notFound } from "@tanstack/react-router";
+import { listen } from "@tauri-apps/api/event";
 import {
 	ReactFlowProvider,
 	type Edge as RFEdge,
 	type Node as RFNode,
 } from "@xyflow/react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Canvas } from "@/components/ai-elements/canvas";
 import { Edge as AIEdge } from "@/components/ai-elements/edge";
 import { Panel } from "@/components/ai-elements/panel";
@@ -71,6 +72,57 @@ function MeetingPrototype() {
 	useCommandPaletteHotkey();
 	const { id } = Route.useParams();
 	const session = useMeetingSession(id);
+
+	// AIZ-20 — IPC handshake for `meeting start` and `meeting stop`.
+	// The CLI / MCP triggers a meeting via `POST /v1/meetings` which opens
+	// this route with `?autostart=live` (or `=demo`); we kick off the
+	// matching session method exactly once. The CLI / MCP triggers a stop
+	// via `POST /v1/meetings/:id/stop`, which fires `cli:meeting-stop` —
+	// we forward it to the session if the id matches.
+	const autostartFiredRef = useRef(false);
+	// autostart is a one-shot per route mount; depending on
+	// session.{startLive,startDemo} would re-run when the hook returns new
+	// closures and double-fire.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: see above
+	useEffect(() => {
+		if (autostartFiredRef.current) return;
+		const params = new URLSearchParams(window.location.search);
+		const autostart = params.get("autostart");
+		if (autostart !== "live" && autostart !== "demo") return;
+		autostartFiredRef.current = true;
+		// Defer so the session hook has finished its initial setup. The
+		// hook also guards against double-start via runningRef.
+		const handle = setTimeout(() => {
+			if (autostart === "live") {
+				session.startLive().catch((err) => {
+					console.error("[meeting] autostart live failed", err);
+				});
+			} else {
+				session.startDemo().catch((err) => {
+					console.error("[meeting] autostart demo failed", err);
+				});
+			}
+		}, 100);
+		return () => clearTimeout(handle);
+	}, [id]);
+
+	// re-subscribing on every session.stopLive identity change would tear
+	// down the listener mid-stop; the closure already reads the current id.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: see above
+	useEffect(() => {
+		const unlistenPromise = listen<{ id: string }>(
+			"cli:meeting-stop",
+			(event) => {
+				if (event.payload?.id !== id) return;
+				session.stopLive().catch((err) => {
+					console.error("[meeting] cli stop failed", err);
+				});
+			},
+		);
+		return () => {
+			unlistenPromise.then((fn) => fn()).catch(() => {});
+		};
+	}, [id]);
 
 	const { nodes, edges } = useMemo(
 		() => layoutGraph(session.graph, session.highlightIds),

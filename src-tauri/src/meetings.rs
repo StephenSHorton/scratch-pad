@@ -187,6 +187,113 @@ pub fn delete_snapshot(base: &Path, id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Update `name` and/or `nameLockedByUser` on an existing snapshot,
+/// rewrite the file, and return the updated `MeetingMeta`. Used by
+/// `PATCH /v1/meetings/:id`.
+///
+/// Either field may be `None` (no change) or `Some(value)`. Passing
+/// both as `None` is a no-op rewrite — still safe, just rewrites the
+/// file with the same contents and returns the existing meta.
+pub fn rename_snapshot(
+    base: &Path,
+    id: &str,
+    name: Option<String>,
+    name_locked_by_user: Option<bool>,
+) -> Result<MeetingMeta, String> {
+    validate_id(id)?;
+    let path = meetings_dir(base).join(format!("{id}.json"));
+    if !path.exists() {
+        return Err(format!("Meeting not found: {id}"));
+    }
+    let data = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let mut value: serde_json::Value = serde_json::from_str(&data).map_err(|e| e.to_string())?;
+    let obj = value
+        .as_object_mut()
+        .ok_or_else(|| "Snapshot is not a JSON object".to_string())?;
+    if let Some(new_name) = name {
+        obj.insert("name".to_string(), serde_json::Value::String(new_name));
+    }
+    if let Some(locked) = name_locked_by_user {
+        obj.insert(
+            "nameLockedByUser".to_string(),
+            serde_json::Value::Bool(locked),
+        );
+    }
+    let json = serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?;
+    fs::write(&path, json).map_err(|e| e.to_string())?;
+    log(&format!("rename_meeting: wrote {path:?}"));
+    get_meta(base, id)
+}
+
+/// Single-id version of `list_snapshots`. Reads the snapshot file at
+/// `base/meetings/<id>.json` and returns its `MeetingMeta`. Used by the
+/// IPC `PATCH /meetings/:id` handler to return the post-update meta.
+pub fn get_meta(base: &Path, id: &str) -> Result<MeetingMeta, String> {
+    validate_id(id)?;
+    let path = meetings_dir(base).join(format!("{id}.json"));
+    if !path.exists() {
+        return Err(format!("Meeting not found: {id}"));
+    }
+    let data = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let value: serde_json::Value = serde_json::from_str(&data).map_err(|e| e.to_string())?;
+    let started_at = value.get("startedAt").and_then(|v| v.as_i64()).unwrap_or(0);
+    let ended_at = value.get("endedAt").and_then(|v| v.as_i64()).unwrap_or(0);
+    let mode = value
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("live")
+        .to_string();
+    let node_count = value
+        .get("graph")
+        .and_then(|g| g.get("nodes"))
+        .and_then(|n| n.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let edge_count = value
+        .get("graph")
+        .and_then(|g| g.get("edges"))
+        .and_then(|n| n.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let thought_count = value
+        .get("thoughts")
+        .and_then(|n| n.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0);
+    let transcript_duration_ms = value
+        .get("transcript")
+        .and_then(|n| n.as_array())
+        .and_then(|arr| {
+            let first = arr
+                .first()
+                .and_then(|c| c.get("startMs"))
+                .and_then(|v| v.as_i64())?;
+            let last = arr
+                .last()
+                .and_then(|c| c.get("endMs"))
+                .and_then(|v| v.as_i64())?;
+            Some(last - first)
+        })
+        .unwrap_or(0);
+    let name = value
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    let name_locked_by_user = value.get("nameLockedByUser").and_then(|v| v.as_bool());
+    Ok(MeetingMeta {
+        id: id.to_string(),
+        started_at,
+        ended_at,
+        mode,
+        node_count,
+        edge_count,
+        thought_count,
+        transcript_duration_ms,
+        name,
+        name_locked_by_user,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -337,5 +444,63 @@ mod tests {
         assert_eq!(metas.len(), 1);
         assert_eq!(metas[0].name.as_deref(), Some("Postgres migration sync"));
         assert_eq!(metas[0].name_locked_by_user, Some(true));
+    }
+
+    #[test]
+    fn get_meta_returns_single_meta() {
+        let base = fresh_base("get-meta");
+        save_snapshot(&base, sample("meeting-x", "live", 100, 200)).unwrap();
+        let meta = get_meta(&base, "meeting-x").unwrap();
+        assert_eq!(meta.id, "meeting-x");
+        assert_eq!(meta.started_at, 100);
+        assert_eq!(meta.ended_at, 200);
+        assert_eq!(meta.node_count, 1);
+        assert!(meta.name.is_none());
+    }
+
+    #[test]
+    fn get_meta_rejects_missing_and_traversal() {
+        let base = fresh_base("get-meta-missing");
+        assert!(get_meta(&base, "nope").is_err());
+        assert!(get_meta(&base, "../etc/passwd").is_err());
+        assert!(get_meta(&base, "").is_err());
+    }
+
+    #[test]
+    fn rename_snapshot_updates_name_and_lock() {
+        let base = fresh_base("rename");
+        save_snapshot(&base, sample("meeting-r", "live", 100, 200)).unwrap();
+        let meta = rename_snapshot(
+            &base,
+            "meeting-r",
+            Some("API design review".to_string()),
+            Some(true),
+        )
+        .unwrap();
+        assert_eq!(meta.name.as_deref(), Some("API design review"));
+        assert_eq!(meta.name_locked_by_user, Some(true));
+
+        // Round-trip through the file so we know it persisted.
+        let loaded = load_snapshot(&base, "meeting-r").unwrap();
+        assert_eq!(loaded["name"], "API design review");
+        assert_eq!(loaded["nameLockedByUser"], true);
+
+        // Updating only one of the two fields leaves the other intact.
+        let meta2 = rename_snapshot(
+            &base,
+            "meeting-r",
+            Some("Renamed again".to_string()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(meta2.name.as_deref(), Some("Renamed again"));
+        assert_eq!(meta2.name_locked_by_user, Some(true));
+    }
+
+    #[test]
+    fn rename_snapshot_rejects_missing_and_traversal() {
+        let base = fresh_base("rename-missing");
+        assert!(rename_snapshot(&base, "nope", Some("x".into()), None).is_err());
+        assert!(rename_snapshot(&base, "../etc/passwd", Some("x".into()), None).is_err());
     }
 }
