@@ -95,6 +95,11 @@ export interface LiveStreamOptions {
 	 * quiet speech where individual chunks contribute few words and timestamps
 	 * may not advance steadily. */
 	chunkCountThreshold?: number;
+	/** When resuming an existing meeting, incoming chunks have timestamps
+	 * starting at 0 (the new capture session's clock). Add this offset to
+	 * keep the transcript array monotonic across the original + resumed
+	 * segments. Defaults to 0. */
+	chunkOffsetMs?: number;
 	signal: FeederSignal;
 	/** Fires once per chunk as it arrives — useful for live captions. */
 	onChunk?: (chunk: TranscriptChunk) => void;
@@ -111,12 +116,25 @@ export async function* consumeLiveStream(
 ): AsyncGenerator<Batch> {
 	const queue: TranscriptChunk[] = [];
 	let resolveNext: (() => void) | null = null;
+	const offsetMs = opts.chunkOffsetMs ?? 0;
 
 	const unlisten = await listen<TranscriptChunk>(
 		"transcript-chunk",
 		(event) => {
-			queue.push(event.payload);
-			opts.onChunk?.(event.payload);
+			const incoming = event.payload;
+			// Offset both timestamps uniformly so per-batch elapsed-time math
+			// (endMs - bufStartMs) is unaffected, while the transcript array
+			// stays monotonic across the original + resumed segments.
+			const chunk: TranscriptChunk =
+				offsetMs === 0
+					? incoming
+					: {
+							...incoming,
+							startMs: incoming.startMs + offsetMs,
+							endMs: incoming.endMs + offsetMs,
+						};
+			queue.push(chunk);
+			opts.onChunk?.(chunk);
 			if (resolveNext) {
 				resolveNext();
 				resolveNext = null;
