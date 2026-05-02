@@ -160,6 +160,17 @@ pub fn load_snapshot(base: &Path, id: &str) -> Result<serde_json::Value, String>
     Ok(value)
 }
 
+pub fn delete_snapshot(base: &Path, id: &str) -> Result<(), String> {
+    validate_id(id)?;
+    let path = meetings_dir(base).join(format!("{id}.json"));
+    if !path.exists() {
+        return Err(format!("Meeting not found: {id}"));
+    }
+    fs::remove_file(&path).map_err(|e| e.to_string())?;
+    log(&format!("delete_meeting: removed {path:?}"));
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,5 +259,38 @@ mod tests {
         // Don't write anything; meetings dir won't exist yet.
         let metas = list_snapshots(&base).unwrap();
         assert!(metas.is_empty());
+    }
+
+    #[test]
+    fn delete_meeting_removes_file() {
+        let base = fresh_base("delete");
+        save_snapshot(&base, sample("m-keep", "live", 100, 200)).unwrap();
+        save_snapshot(&base, sample("m-doomed", "live", 300, 400)).unwrap();
+        assert_eq!(list_snapshots(&base).unwrap().len(), 2);
+
+        delete_snapshot(&base, "m-doomed").unwrap();
+
+        let metas = list_snapshots(&base).unwrap();
+        assert_eq!(metas.len(), 1);
+        assert_eq!(metas[0].id, "m-keep");
+
+        // Loading the deleted id should now fail.
+        assert!(load_snapshot(&base, "m-doomed").is_err());
+    }
+
+    #[test]
+    fn delete_meeting_rejects_path_traversal() {
+        let base = fresh_base("delete-traversal");
+        assert!(delete_snapshot(&base, "../etc/passwd").is_err());
+        assert!(delete_snapshot(&base, "a/b").is_err());
+        assert!(delete_snapshot(&base, "a\\b").is_err());
+        assert!(delete_snapshot(&base, "").is_err());
+    }
+
+    #[test]
+    fn delete_meeting_errors_when_missing() {
+        let base = fresh_base("delete-missing");
+        let err = delete_snapshot(&base, "nope").unwrap_err();
+        assert!(err.contains("not found"), "got: {err}");
     }
 }
