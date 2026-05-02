@@ -1,20 +1,18 @@
 {
 	"compilerOptions": {
-		"tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
-		"target": "ES2022",
-		"useDefineForClassFields": true,
-		"lib": ["ES2022", "DOM", "DOM.Iterable"],
+		"tsBuildInfoFile": "./node_modules/.tmp/tsconfig.cli.tsbuildinfo",
+		"target": "ES2023",
+		"lib": ["ES2023"],
 		"module": "ESNext",
-		"types": ["vite/client"],
+		"types": ["node", "bun"],
 		"skipLibCheck": true,
 
-		/* Bundler mode */
+		/* Bundler-style resolution under Bun */
 		"moduleResolution": "bundler",
 		"allowImportingTsExtensions": true,
 		"verbatimModuleSyntax": true,
 		"moduleDetection": "force",
 		"noEmit": true,
-		"jsx": "react-jsx",
 
 		/* Linting */
 		"strict": true,
@@ -28,10 +26,6 @@
 			"@/*": ["./src/*"]
 		}
 	},
-	"include": ["src"],
-	"exclude": [
-		"src/lib/aizuchi/harness.ts",
-		"src/lib/cli-core",
-		"src/lib/cli-core/**/*"
-	]
+	"include": ["src/lib/cli-core/**/*", "bin/**/*"],
+	"exclude": []
 }

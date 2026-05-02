@@ -1,0 +1,504 @@
+#!/usr/bin/env bun
+/**
+ * `scratch-pad` — base CLI for the Scratch Pad / Aizuchi desktop app.
+ *
+ * Phase 3 of AIZ-13. Wraps the typed IPC client at `src/lib/cli-core/`
+ * with a friendly command surface. The full method surface is exposed
+ * by the client; this binary only reaches for the subset listed in
+ * AIZ-21. The "extended" CLI (AIZ-22) and MCP refactor (AIZ-23) layer
+ * additional UX on top of the same client.
+ *
+ * Output rules:
+ *   --json          Emit canonical JSON (the IPC server response shape).
+ *   NO_COLOR=1      Strip ANSI codes regardless of TTY.
+ *   non-TTY pipes   Plain, tab-separated rows (no headers).
+ *
+ * Errors:
+ *   AppNotRunning   Friendly one-liner. Exit 1.
+ *   Other           "scratch-pad: <message>" to stderr. Exit 1.
+ *   --debug         Also print the stack trace.
+ */
+
+import { spawnSync } from "node:child_process";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { cac } from "cac";
+
+import {
+	AppNotRunningError,
+	IpcClientError,
+	type MeetingMeta,
+	type Note,
+	ScratchPadClient,
+} from "../src/lib/cli-core";
+
+// ---------------------------------------------------------------------------
+// Output helpers
+// ---------------------------------------------------------------------------
+
+const ANSI = {
+	reset: "\x1b[0m",
+	dim: "\x1b[2m",
+	bold: "\x1b[1m",
+};
+
+function colorEnabled(): boolean {
+	if (process.env.NO_COLOR) return false;
+	return Boolean(process.stdout.isTTY);
+}
+
+function dim(s: string): string {
+	return colorEnabled() ? `${ANSI.dim}${s}${ANSI.reset}` : s;
+}
+
+function bold(s: string): string {
+	return colorEnabled() ? `${ANSI.bold}${s}${ANSI.reset}` : s;
+}
+
+function isTTY(): boolean {
+	return Boolean(process.stdout.isTTY);
+}
+
+function emitJson(value: unknown): void {
+	process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+// ---------------------------------------------------------------------------
+// Error handling
+// ---------------------------------------------------------------------------
+
+interface GlobalFlags {
+	debug?: boolean;
+}
+
+function fatal(err: unknown, flags: GlobalFlags): never {
+	if (err instanceof AppNotRunningError) {
+		process.stderr.write(
+			"scratch-pad: app isn't running. Start it with `open -a 'Scratch Pad'` or run `bun tauri dev` from the repo.\n",
+		);
+		process.exit(1);
+	}
+	const message = err instanceof Error ? err.message : String(err);
+	process.stderr.write(`scratch-pad: ${message}\n`);
+	if (flags.debug && err instanceof Error && err.stack) {
+		process.stderr.write(`${err.stack}\n`);
+	}
+	process.exit(1);
+}
+
+// Reads the parent CLI's parsed --json/--debug. cac merges these into
+// every subcommand's options object via `globalCommand`.
+function readFlags(opts: Record<string, unknown>): {
+	json: boolean;
+	debug: boolean;
+} {
+	return {
+		json: opts.json === true,
+		debug: opts.debug === true,
+	};
+}
+
+// ---------------------------------------------------------------------------
+// Pad rendering
+// ---------------------------------------------------------------------------
+
+function formatPadRow(note: Note): string {
+	const id = note.id;
+	const title = (note.title ?? "").replace(/\s+/g, " ").slice(0, 40);
+	const color = note.color;
+	const hidden = note.hidden ? "yes" : "no";
+	const updatedAt = note.createdAt;
+	if (isTTY()) {
+		return [
+			id.padEnd(36),
+			title.padEnd(40),
+			color.padEnd(8),
+			hidden.padEnd(7),
+			updatedAt,
+		].join(" ");
+	}
+	// Pipe-friendly: tab-separated.
+	return [id, title, color, hidden, updatedAt].join("\t");
+}
+
+function renderPadList(notes: Note[]): string {
+	if (notes.length === 0) {
+		return isTTY() ? dim("(no pads)") : "";
+	}
+	const lines: string[] = [];
+	if (isTTY()) {
+		lines.push(
+			bold(
+				[
+					"id".padEnd(36),
+					"title".padEnd(40),
+					"color".padEnd(8),
+					"hidden".padEnd(7),
+					"createdAt",
+				].join(" "),
+			),
+		);
+	}
+	for (const note of notes) lines.push(formatPadRow(note));
+	return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Meeting rendering
+// ---------------------------------------------------------------------------
+
+function formatMeetingRow(meeting: MeetingMeta): string {
+	const id = meeting.id;
+	const name = meeting.name ?? id.slice(0, 16);
+	const startedAt = isoOrEmpty(meeting.startedAt);
+	const endedAt = isoOrEmpty(meeting.endedAt);
+	const mode = meeting.mode;
+	const counts = `${meeting.nodeCount}n/${meeting.edgeCount}e/${meeting.thoughtCount}t`;
+	if (isTTY()) {
+		return [
+			id.padEnd(40),
+			name.padEnd(28),
+			startedAt.padEnd(20),
+			endedAt.padEnd(20),
+			mode.padEnd(5),
+			counts,
+		].join(" ");
+	}
+	return [id, name, startedAt, endedAt, mode, counts].join("\t");
+}
+
+function renderMeetingList(meetings: MeetingMeta[]): string {
+	if (meetings.length === 0) {
+		return isTTY() ? dim("(no meetings)") : "";
+	}
+	const lines: string[] = [];
+	if (isTTY()) {
+		lines.push(
+			bold(
+				[
+					"id".padEnd(40),
+					"name".padEnd(28),
+					"started".padEnd(20),
+					"ended".padEnd(20),
+					"mode".padEnd(5),
+					"counts",
+				].join(" "),
+			),
+		);
+	}
+	for (const m of meetings) lines.push(formatMeetingRow(m));
+	return lines.join("\n");
+}
+
+function isoOrEmpty(epochMs: number): string {
+	if (!Number.isFinite(epochMs) || epochMs <= 0) return "—";
+	try {
+		return new Date(epochMs).toISOString();
+	} catch {
+		return "—";
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Stdin helpers
+// ---------------------------------------------------------------------------
+
+async function readAllStdin(): Promise<string> {
+	const chunks: Buffer[] = [];
+	for await (const chunk of process.stdin) {
+		chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+	}
+	return Buffer.concat(chunks).toString("utf-8");
+}
+
+// ---------------------------------------------------------------------------
+// Editor helpers
+// ---------------------------------------------------------------------------
+
+function resolveEditor(): string {
+	if (process.env.VISUAL) return process.env.VISUAL;
+	if (process.env.EDITOR) return process.env.EDITOR;
+	// Try vim then nano. We can't really probe `which` synchronously
+	// without a child_process — fall back to "vim" and let exec fail
+	// loudly if it isn't installed.
+	return "vim";
+}
+
+async function editInExternalEditor(
+	initial: string,
+	id: string,
+): Promise<{
+	updated: string;
+	exitCode: number;
+}> {
+	const tmpName = `scratch-pad-${id}-${Math.random().toString(36).slice(2, 10)}.md`;
+	const tmpPath = path.join(os.tmpdir(), tmpName);
+	await fs.writeFile(tmpPath, initial, "utf-8");
+	try {
+		const editor = resolveEditor();
+		// Bun.spawn with stdio:"inherit" gives the editor full control of
+		// the terminal — exactly what an interactive editor needs.
+		const result = spawnSync(editor, [tmpPath], { stdio: "inherit" });
+		const exitCode = result.status ?? 1;
+		const updated = await fs.readFile(tmpPath, "utf-8");
+		return { updated, exitCode };
+	} finally {
+		// Best-effort cleanup. Doesn't matter much if it fails.
+		try {
+			await fs.unlink(tmpPath);
+		} catch {
+			// noop
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CLI definition
+// ---------------------------------------------------------------------------
+
+const cli = cac("scratch-pad");
+
+// Global flags. Every subcommand inherits these.
+cli.option("--json", "Emit canonical JSON instead of human output");
+cli.option("--debug", "Print full stack traces on error");
+
+// ---- ls ----------------------------------------------------------------
+
+cli
+	.command("ls", "List visible pads")
+	.option("--all", "Include hidden pads")
+	.option("--hidden", "Show only hidden pads")
+	.action(async (opts) => {
+		const flags = readFlags(opts);
+		try {
+			const client = await ScratchPadClient.create();
+			const listOpts = opts.hidden
+				? ({ only: "hidden" } as const)
+				: opts.all
+					? ({ include: "hidden" } as const)
+					: {};
+			const pads = await client.listPads(listOpts);
+			if (flags.json) emitJson(pads);
+			else process.stdout.write(`${renderPadList(pads)}\n`);
+		} catch (err) {
+			fatal(err, flags);
+		}
+	});
+
+// ---- new ---------------------------------------------------------------
+
+cli
+	.command("new [body]", "Create a pad. Body comes from arg or stdin.")
+	.option("--title <title>", "Optional title")
+	.option("--color <color>", "Color: yellow|pink|blue|green")
+	.action(async (bodyArg: string | undefined, opts) => {
+		const flags = readFlags(opts);
+		try {
+			let body = bodyArg ?? "";
+			if (!bodyArg) {
+				if (process.stdin.isTTY) {
+					throw new IpcClientError(
+						"missing_body",
+						"provide a body argument or pipe content via stdin.",
+					);
+				}
+				body = (await readAllStdin()).replace(/\n+$/, "");
+			}
+			const client = await ScratchPadClient.create();
+			const note = await client.createPad({
+				body,
+				title: opts.title,
+				color: opts.color,
+			});
+			if (flags.json) emitJson(note);
+			else process.stdout.write(`${note.id}\n`);
+		} catch (err) {
+			fatal(err, flags);
+		}
+	});
+
+// ---- cat ---------------------------------------------------------------
+
+cli
+	.command("cat <id>", "Print pad body to stdout")
+	.action(async (id: string, opts) => {
+		const flags = readFlags(opts);
+		try {
+			const client = await ScratchPadClient.create();
+			const note = await client.getPad(id);
+			if (flags.json) emitJson(note);
+			else process.stdout.write(`${note.body}\n`);
+		} catch (err) {
+			fatal(err, flags);
+		}
+	});
+
+// ---- edit --------------------------------------------------------------
+
+cli
+	.command("edit <id>", "Open $EDITOR to update the pad")
+	.action(async (id: string, opts) => {
+		const flags = readFlags(opts);
+		try {
+			const client = await ScratchPadClient.create();
+			const note = await client.getPad(id);
+			const original = note.body;
+			const { updated, exitCode } = await editInExternalEditor(original, id);
+			if (exitCode !== 0) {
+				process.stderr.write(
+					`scratch-pad: editor exited ${exitCode}; not saving.\n`,
+				);
+				process.exit(1);
+			}
+			if (updated === original) {
+				process.stdout.write("No changes.\n");
+				return;
+			}
+			const result = await client.updatePad(id, { body: updated });
+			if (flags.json) emitJson(result);
+			else process.stdout.write("Updated.\n");
+		} catch (err) {
+			fatal(err, flags);
+		}
+	});
+
+// ---- rm ----------------------------------------------------------------
+
+cli
+	.command("rm <id>", "Delete a pad")
+	.option("--force", "Skip soft-delete (currently a no-op; reserved)")
+	.action(async (id: string, opts) => {
+		const flags = readFlags(opts);
+		try {
+			const client = await ScratchPadClient.create();
+			await client.deletePad(id);
+			if (flags.json) emitJson({ ok: true, id });
+			else process.stdout.write(`Deleted ${id}.\n`);
+		} catch (err) {
+			fatal(err, flags);
+		}
+	});
+
+// ---- focus -------------------------------------------------------------
+
+cli
+	.command("focus <id>", "Bring a pad's window forward")
+	.action(async (id: string, opts) => {
+		const flags = readFlags(opts);
+		try {
+			const client = await ScratchPadClient.create();
+			await client.focusPad(id);
+			if (flags.json) emitJson({ ok: true, id });
+			else process.stdout.write(`Focused ${id}.\n`);
+		} catch (err) {
+			fatal(err, flags);
+		}
+	});
+
+// ---- meeting ----------------------------------------------------------
+
+cli
+	.command("meeting <subcommand> [id]", "Manage meetings (start|stop|ls|open)")
+	.option("--mode <mode>", "live or demo", { default: "live" })
+	.action(async (subcommand: string, id: string | undefined, opts) => {
+		const flags = readFlags(opts);
+		try {
+			const client = await ScratchPadClient.create();
+			switch (subcommand) {
+				case "ls": {
+					const meetings = await client.listMeetings();
+					if (flags.json) emitJson(meetings);
+					else process.stdout.write(`${renderMeetingList(meetings)}\n`);
+					return;
+				}
+				case "start": {
+					const mode = String(opts.mode);
+					if (mode !== "demo" && mode !== "live") {
+						throw new IpcClientError(
+							"validation_error",
+							`--mode must be 'demo' or 'live' (got ${JSON.stringify(mode)}).`,
+						);
+					}
+					const result = await client.startMeeting(mode);
+					if (flags.json) emitJson(result);
+					else
+						process.stdout.write(
+							`Started ${mode} meeting ${result.id}. Window opened.\n`,
+						);
+					return;
+				}
+				case "stop": {
+					if (!id) {
+						process.stderr.write(
+							"scratch-pad: meeting stop requires the meeting id. Use `scratch-pad meeting ls` to find it.\n",
+						);
+						process.exit(1);
+					}
+					const meta = await client.stopMeeting(id);
+					if (flags.json) emitJson(meta);
+					else
+						process.stdout.write(
+							`Stopped ${id}. ended=${isoOrEmpty(meta.endedAt)}.\n`,
+						);
+					return;
+				}
+				case "open": {
+					if (!id) {
+						process.stderr.write(
+							"scratch-pad: meeting open requires the meeting id.\n",
+						);
+						process.exit(1);
+					}
+					await client.openMeeting(id);
+					if (flags.json) emitJson({ ok: true, id });
+					else process.stdout.write(`Opened ${id}.\n`);
+					return;
+				}
+				default:
+					process.stderr.write(
+						`scratch-pad: unknown meeting subcommand '${subcommand}'. Try: start, stop, ls, open.\n`,
+					);
+					process.exit(2);
+			}
+		} catch (err) {
+			fatal(err, flags);
+		}
+	});
+
+// ---- status -----------------------------------------------------------
+
+cli.command("status", "Show app status / IPC version").action(async (opts) => {
+	const flags = readFlags(opts);
+	try {
+		const client = await ScratchPadClient.create();
+		const status = await client.status();
+		if (flags.json) emitJson(status);
+		else
+			process.stdout.write(
+				`Running. ${status.app.name} ${status.app.version}. IPC v${status.ipc.version}.\n`,
+			);
+	} catch (err) {
+		fatal(err, flags);
+	}
+});
+
+// ---- top-level / parse ------------------------------------------------
+
+cli.help();
+cli.version("0.1.0");
+
+try {
+	cli.parse(process.argv, { run: false });
+	if (cli.matchedCommand === undefined && process.argv.length <= 2) {
+		// No subcommand → show help instead of silently doing nothing.
+		cli.outputHelp();
+		process.exit(0);
+	}
+	await cli.runMatchedCommand();
+} catch (err) {
+	// cac throws CACError on unknown options, which we want to surface
+	// like any other failure: friendly message + exit 1.
+	fatal(err, { debug: process.argv.includes("--debug") });
+}
