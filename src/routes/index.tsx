@@ -18,6 +18,8 @@ interface Note {
 	createdAt: string;
 	expiresAt?: string;
 	position?: { x: number; y: number };
+	hidden?: boolean;
+	hiddenAt?: string;
 }
 
 // Remote note from P2P peers
@@ -821,8 +823,14 @@ function StickyNote() {
 					>
 						<button
 							type="button"
-							onClick={() => setColorPickerOpen(!colorPickerOpen)}
-							onBlur={() => setTimeout(() => setColorPickerOpen(false), 150)}
+							onClick={() => {
+								setColorPickerOpen(!colorPickerOpen);
+								if (colorPickerOpen) setConfirmDelete(false);
+							}}
+							onBlur={() => setTimeout(() => {
+								setColorPickerOpen(false);
+								setConfirmDelete(false);
+							}, 150)}
 							style={{
 								background: NOTE_COLORS[note.color].bg,
 								border: `1.5px solid ${NOTE_COLORS[note.color].dismiss}`,
@@ -848,83 +856,119 @@ function StickyNote() {
 									borderRadius: "8px",
 									padding: "6px",
 									display: "flex",
-									gap: "5px",
+									flexDirection: "column",
+									gap: "6px",
 									boxShadow: "0 2px 12px rgba(0,0,0,0.15)",
 									zIndex: 10,
 								}}
 							>
-								{(["yellow", "pink", "blue", "green"] as const).map((c) => (
-									<button
-										key={c}
-										type="button"
-										onClick={() => {
-											if (c !== note.color) {
-												invoke<Note | null>("update_note_color", {
-													id: note.id,
-													color: c,
-												}).then((updated) => {
-													if (updated) setNote(updated);
-												});
+								<div style={{ display: "flex", gap: "5px" }}>
+									{(["yellow", "pink", "blue", "green"] as const).map((c) => (
+										<button
+											key={c}
+											type="button"
+											onClick={() => {
+												if (c !== note.color) {
+													invoke<Note | null>("update_note_color", {
+														id: note.id,
+														color: c,
+													}).then((updated) => {
+														if (updated) setNote(updated);
+													});
+												}
+												setColorPickerOpen(false);
+												setConfirmDelete(false);
+											}}
+											style={{
+												background: NOTE_COLORS[c].bg,
+												border:
+													c === note.color
+														? `2px solid ${NOTE_COLORS[c].text}`
+														: `1.5px solid ${NOTE_COLORS[c].dismiss}`,
+												width: "18px",
+												height: "18px",
+												borderRadius: "50%",
+												cursor: "pointer",
+												padding: 0,
+												transition: "transform 0.1s",
+											}}
+											onMouseEnter={(e) =>
+												(e.currentTarget.style.transform = "scale(1.2)")
 											}
-											setColorPickerOpen(false);
-										}}
-										style={{
-											background: NOTE_COLORS[c].bg,
-											border:
-												c === note.color
-													? `2px solid ${NOTE_COLORS[c].text}`
-													: `1.5px solid ${NOTE_COLORS[c].dismiss}`,
-											width: "18px",
-											height: "18px",
-											borderRadius: "50%",
-											cursor: "pointer",
-											padding: 0,
-											transition: "transform 0.1s",
-										}}
-										onMouseEnter={(e) =>
-											(e.currentTarget.style.transform = "scale(1.2)")
+											onMouseLeave={(e) =>
+												(e.currentTarget.style.transform = "scale(1)")
+											}
+										/>
+									))}
+								</div>
+								{/* Explicit hard-delete — two-step confirm. */}
+								<button
+									type="button"
+									onClick={() => {
+										if (confirmDelete) {
+											invoke("dismiss_note", { id: note.id });
+										} else {
+											setConfirmDelete(true);
 										}
-										onMouseLeave={(e) =>
-											(e.currentTarget.style.transform = "scale(1)")
+									}}
+									style={{
+										background: confirmDelete
+											? "rgba(220,38,38,0.15)"
+											: "transparent",
+										border: confirmDelete
+											? "1px solid rgba(220,38,38,0.4)"
+											: "1px solid rgba(0,0,0,0.08)",
+										color: confirmDelete ? "#dc2626" : "#555",
+										fontSize: "11px",
+										fontWeight: 500,
+										cursor: "pointer",
+										padding: "5px 8px",
+										borderRadius: "5px",
+										whiteSpace: "nowrap",
+										transition: "all 0.12s",
+										textAlign: "center",
+									}}
+									onMouseEnter={(e) => {
+										if (!confirmDelete) {
+											e.currentTarget.style.background = "rgba(0,0,0,0.05)";
 										}
-									/>
-								))}
+									}}
+									onMouseLeave={(e) => {
+										if (!confirmDelete) {
+											e.currentTarget.style.background = "transparent";
+										}
+									}}
+								>
+									{confirmDelete ? "Click to confirm delete" : "Delete pad"}
+								</button>
 							</div>
 						)}
 					</div>
 
-					{/* Delete button — two-step: click once to confirm, click again to delete */}
+					{/* Close button — soft-delete (hides the pad). The hard delete
+					    lives inside the color-picker overlay. */}
 					<button
 						type="button"
 						onClick={() => {
-							if (confirmDelete) {
-								invoke("dismiss_note", { id: note.id });
-							} else {
-								setConfirmDelete(true);
-							}
+							invoke("hide_note", { id: note.id });
 						}}
-						onBlur={() => setConfirmDelete(false)}
+						title="Close (returns via 'Show hidden pads')"
 						style={{
-							background: confirmDelete ? "rgba(220,38,38,0.15)" : "none",
+							background: "none",
 							border: "none",
-							color: confirmDelete ? "#dc2626" : colors.dismiss,
-							fontSize: confirmDelete ? "11px" : "18px",
+							color: colors.dismiss,
+							fontSize: "18px",
 							cursor: "pointer",
 							lineHeight: 1,
-							padding: confirmDelete ? "3px 6px" : "2px 4px",
+							padding: "2px 4px",
 							borderRadius: "4px",
-							opacity: confirmDelete ? 1 : 0.7,
+							opacity: 0.7,
 							transition: "all 0.15s",
-							whiteSpace: "nowrap",
 						}}
-						onMouseEnter={(e) => {
-							if (!confirmDelete) e.currentTarget.style.opacity = "1";
-						}}
-						onMouseLeave={(e) => {
-							if (!confirmDelete) e.currentTarget.style.opacity = "0.7";
-						}}
+						onMouseEnter={(e) => (e.currentTarget.style.opacity = "1")}
+						onMouseLeave={(e) => (e.currentTarget.style.opacity = "0.7")}
 					>
-						{confirmDelete ? "Delete?" : "\u2715"}
+						{"\u2715"}
 					</button>
 				</div>
 			)}

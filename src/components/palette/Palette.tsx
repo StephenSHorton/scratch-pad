@@ -36,6 +36,11 @@ const ACTIONS: Action[] = [
 		description: "Auto-layout all open pads",
 	},
 	{
+		id: "show_hidden_pads",
+		label: "Show hidden pads",
+		description: "Reopen any pads that were closed (un-hide all)",
+	},
+	{
 		id: "lobby",
 		label: "Multiplayer…",
 		description: "Open the room lobby",

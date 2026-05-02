@@ -34,7 +34,14 @@ pub struct Note {
     pub expires_at: Option<String>,
     pub position: Option<Position>,
     pub size: Option<Size>,
+    #[serde(default)]
+    pub hidden: bool,
+    #[serde(default)]
+    pub hidden_at: Option<String>,
 }
+
+// Hidden pads are auto-purged after this many days.
+const HIDDEN_TTL_DAYS: i64 = 30;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Position {
@@ -164,6 +171,8 @@ fn create_blank_note() {
         expires_at: None,
         position: None,
         size: None,
+        hidden: false,
+        hidden_at: None,
     };
     let mut notes = read_notes();
     notes.push(note);
@@ -181,10 +190,40 @@ fn create_note_with_body(title: Option<String>, body: String, color: &str) {
         expires_at: None,
         position: None,
         size: None,
+        hidden: false,
+        hidden_at: None,
     };
     let mut notes = read_notes();
     notes.push(note);
     write_notes(&notes);
+}
+
+// Sweep stale hidden notes (hidden longer than HIDDEN_TTL_DAYS).
+// Returns the surviving notes; if any were removed, the file is rewritten.
+fn purge_stale_hidden(notes: Vec<Note>) -> Vec<Note> {
+    let cutoff = Utc::now() - chrono::Duration::days(HIDDEN_TTL_DAYS);
+    let original_len = notes.len();
+    let kept: Vec<Note> = notes
+        .into_iter()
+        .filter(|n| {
+            if !n.hidden {
+                return true;
+            }
+            match n.hidden_at.as_deref().and_then(|s| s.parse::<DateTime<Utc>>().ok()) {
+                Some(ts) => ts > cutoff,
+                None => true, // missing/invalid timestamp — keep, no anchor for age
+            }
+        })
+        .collect();
+    if kept.len() != original_len {
+        log(&format!(
+            "purge_stale_hidden: removed {} hidden note(s) older than {}d",
+            original_len - kept.len(),
+            HIDDEN_TTL_DAYS
+        ));
+        write_notes(&kept);
+    }
+    kept
 }
 
 fn always_on_top_setting(app: &AppHandle) -> bool {
@@ -335,6 +374,50 @@ fn dismiss_note(id: String, app: AppHandle, state: tauri::State<'_, NotesState>)
     }
 }
 
+// Soft-delete: flag the note as hidden and close its window. The note
+// stays in notes.json so it can be brought back via the palette.
+#[tauri::command]
+fn hide_note(id: String, app: AppHandle, state: tauri::State<'_, NotesState>) {
+    if let Ok(mut notes) = state.notes.lock() {
+        if let Some(note) = notes.iter_mut().find(|n| n.id == id) {
+            note.hidden = true;
+            note.hidden_at = Some(Utc::now().to_rfc3339());
+            write_notes(&notes);
+            log(&format!("hide_note: {id} hidden"));
+        }
+    }
+    if let Some(window) = app.get_webview_window(&id) {
+        window.close().ok();
+    }
+}
+
+// Reveal every hidden pad. First-cut blanket action — clears the flag on all
+// notes and triggers a sync so windows reopen.
+fn restore_hidden_pads(app: &AppHandle, state: &NotesState) -> usize {
+    let mut notes = read_notes();
+    let mut count = 0;
+    for note in notes.iter_mut() {
+        if note.hidden {
+            note.hidden = false;
+            note.hidden_at = None;
+            count += 1;
+        }
+    }
+    if count > 0 {
+        write_notes(&notes);
+    }
+    log(&format!("show_hidden_pads: restored {count} note(s)"));
+    if count > 0 {
+        sync_windows(app, state);
+    }
+    count
+}
+
+#[tauri::command]
+fn show_hidden_pads(app: AppHandle, state: tauri::State<'_, NotesState>) -> usize {
+    restore_hidden_pads(&app, &state)
+}
+
 #[tauri::command]
 fn update_note_color(id: String, color: String, state: tauri::State<'_, NotesState>) -> Option<Note> {
     if let Ok(mut notes) = state.notes.lock() {
@@ -440,6 +523,9 @@ fn dispatch_action(app: AppHandle, id: String, state: tauri::State<'_, NotesStat
         "show_logs" => open_logs_window(&app),
         "lobby" => open_lobby_window(&app),
         "aizuchi" => open_meeting_window(&app, None),
+        "show_hidden_pads" => {
+            restore_hidden_pads(&app, &state);
+        }
         _ => log(&format!("dispatch_action: unknown id {id}")),
     }
 }
@@ -927,7 +1013,7 @@ fn organize_windows(app: &AppHandle, state: &NotesState) {
     log("Organizing windows");
     let note_ids: Vec<String> = {
         let notes = state.notes.lock().unwrap();
-        notes.iter().map(|n| n.id.clone()).collect()
+        notes.iter().filter(|n| !n.hidden).map(|n| n.id.clone()).collect()
     };
 
     let count = note_ids.len();
@@ -981,9 +1067,10 @@ fn organize_windows(app: &AppHandle, state: &NotesState) {
         }
     }
 
-    // Also persist positions
+    // Also persist positions for the visible notes that just got placed.
+    // Hidden notes are left untouched.
     if let Ok(mut notes) = state.notes.lock() {
-        for (i, note) in notes.iter_mut().enumerate() {
+        for (i, note) in notes.iter_mut().filter(|n| !n.hidden).enumerate() {
             let col = i % cols;
             let row = i / cols;
             let x = screen_x + pad_side + (col as f64 * (win_w + gap));
@@ -1045,6 +1132,14 @@ fn sync_windows(app: &AppHandle, state: &NotesState) {
         true
     });
 
+    // Hidden notes stay in notes.json but get no window. Close any window
+    // that may already be open for one (e.g. just-hidden via hide_note).
+    for hidden in notes.iter().filter(|n| n.hidden) {
+        if let Some(window) = app.get_webview_window(&hidden.id) {
+            window.close().ok();
+        }
+    }
+
     // Sanitize absurd positions (e.g. from coordinate system mismatches)
     let mut needs_write = false;
     for note in notes.iter_mut() {
@@ -1060,10 +1155,11 @@ fn sync_windows(app: &AppHandle, state: &NotesState) {
         write_notes(&notes);
     }
 
-    // Collect IDs of current notes
+    // Collect IDs of all current notes (visible + hidden) — hidden notes
+    // remain valid; their windows are simply not opened.
     let note_ids: Vec<String> = notes.iter().map(|n| n.id.clone()).collect();
 
-    // Close windows for notes that no longer exist
+    // Close windows for notes that no longer exist on disk
     if let Ok(existing) = state.notes.lock() {
         for old_note in existing.iter() {
             if !note_ids.contains(&old_note.id) {
@@ -1074,8 +1170,9 @@ fn sync_windows(app: &AppHandle, state: &NotesState) {
         }
     }
 
-    // Create windows for new notes, update existing ones
-    for (i, note) in notes.iter().enumerate() {
+    // Create windows for visible notes, update existing ones. Hidden notes
+    // are skipped entirely.
+    for (i, note) in notes.iter().filter(|n| !n.hidden).enumerate() {
         if let Some(window) = app.get_webview_window(&note.id) {
             // Window already exists — push updated data to the frontend
             window.emit("note-updated", note.clone()).ok();
@@ -1091,7 +1188,9 @@ fn sync_windows(app: &AppHandle, state: &NotesState) {
         }
     }
 
-    // Update the shared state
+    // Update the shared state with the full set (including hidden), so the
+    // mutating commands that round-trip through state.notes.lock() preserve
+    // them on disk.
     if let Ok(mut state_notes) = state.notes.lock() {
         *state_notes = notes;
     }
@@ -1125,6 +1224,8 @@ fn sync_windows(app: &AppHandle, state: &NotesState) {
                     expires_at: None,
                     position: None,
                     size: None,
+                    hidden: false,
+                    hidden_at: None,
                 };
                 create_note_window(app, &remote_note, 0);
             }
@@ -1187,6 +1288,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_note,
             dismiss_note,
+            hide_note,
+            show_hidden_pads,
             update_note_body,
             update_note_color,
             update_note_position,
@@ -1358,8 +1461,10 @@ pub fn run() {
             // Ensure the notes directory exists
             fs::create_dir_all(notes_dir()).ok();
 
+            // Sweep stale hidden pads (hidden + hiddenAt older than HIDDEN_TTL_DAYS)
+            let notes = purge_stale_hidden(read_notes());
+
             // Create a welcome note if no notes exist yet
-            let notes = read_notes();
             if notes.is_empty() {
                 let welcome = Note {
                     id: uuid::Uuid::new_v4().to_string(),
@@ -1368,7 +1473,8 @@ pub fn run() {
                            **Quick start:**\n\
                            - Double-click text to edit\n\
                            - Drag anywhere to move\n\
-                           - Click \u{2715} to delete\n\n\
+                           - Click \u{2715} to close (the pad is just hidden — bring it back via Cmd+K → Show hidden pads)\n\
+                           - To permanently delete, open the color picker and choose Delete pad\n\n\
                            **Connect to Claude Code:**\n\
                            ```\n\
                            claude mcp add --transport stdio --scope user scratch-pad -- \"/Applications/Scratch Pad.app/Contents/MacOS/scratch-pad-mcp\"\n\
@@ -1381,6 +1487,8 @@ pub fn run() {
                     expires_at: None,
                     position: None,
                     size: None,
+                    hidden: false,
+                    hidden_at: None,
                 };
                 write_notes(&[welcome]);
             }
@@ -1806,6 +1914,8 @@ async fn check_for_updates(handle: AppHandle, silent: bool) {
                 expires_at: None,
                 position: None,
                 size: None,
+                hidden: false,
+                hidden_at: None,
             };
             let mut notes = read_notes();
             notes.retain(|n| n.id != "update-status");
@@ -1842,6 +1952,8 @@ async fn check_for_updates(handle: AppHandle, silent: bool) {
                     ),
                     position: None,
                     size: None,
+                    hidden: false,
+                    hidden_at: None,
                 };
                 let mut notes = read_notes();
                 notes.retain(|n| n.id != "update-status");
@@ -1863,6 +1975,8 @@ async fn check_for_updates(handle: AppHandle, silent: bool) {
                     ),
                     position: None,
                     size: None,
+                    hidden: false,
+                    hidden_at: None,
                 };
                 let mut notes = read_notes();
                 notes.retain(|n| n.id != "update-status");
