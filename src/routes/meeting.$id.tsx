@@ -1,4 +1,4 @@
-import { createFileRoute, notFound } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { listen } from "@tauri-apps/api/event";
 import {
 	ReactFlowProvider,
@@ -183,9 +183,6 @@ function MeetingPrototype() {
 }
 
 export const Route = createFileRoute("/meeting/$id")({
-	beforeLoad: () => {
-		if (import.meta.env.VITE_AIZUCHI !== "1") throw notFound();
-	},
 	component: MeetingPrototype,
 });
 
