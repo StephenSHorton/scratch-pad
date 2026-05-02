@@ -550,6 +550,11 @@ fn load_meeting(id: String) -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
+fn delete_meeting(id: String) -> Result<(), String> {
+    meetings::delete_snapshot(&notes_dir(), &id)
+}
+
+#[tauri::command]
 fn open_meeting(app: AppHandle, id: Option<String>) {
     open_meeting_window(&app, id.as_deref());
 }
@@ -1318,6 +1323,7 @@ pub fn run() {
             save_meeting,
             list_meetings,
             load_meeting,
+            delete_meeting,
             open_meeting,
         ])
         .setup(|app| {

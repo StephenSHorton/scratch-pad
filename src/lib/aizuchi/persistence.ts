@@ -94,6 +94,10 @@ export function loadSnapshot(id: string): Promise<MeetingSnapshot> {
 	return invoke<MeetingSnapshot>("load_meeting", { id });
 }
 
+export function deleteSnapshot(id: string): Promise<void> {
+	return invoke<void>("delete_meeting", { id });
+}
+
 export function openMeetingWindow(id?: string): Promise<void> {
 	return invoke<void>("open_meeting", { id: id ?? null });
 }
