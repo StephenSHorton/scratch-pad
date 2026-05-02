@@ -3,8 +3,8 @@
 //!
 //! Binds to `127.0.0.1:0` (OS-assigned ephemeral port). Authenticates
 //! every endpoint except `GET /v1/app/status` via a 256-bit bearer
-//! token persisted at `~/.scratch-pad/cli-token`. The bound port is
-//! published to `~/.scratch-pad/cli.port` (and `cli.json`) so the CLI
+//! token persisted at `~/.aizuchi/cli-token`. The bound port is
+//! published to `~/.aizuchi/cli.port` (and `cli.json`) so the CLI
 //! can find us without a registry.
 //!
 //! The wire format (codes, paths, JSON shapes) is FROZEN by the v1

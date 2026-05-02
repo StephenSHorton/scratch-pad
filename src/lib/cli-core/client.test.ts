@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { ScratchPadClient } from "./client";
+import { AizuchiClient } from "./client";
 import {
 	AppNotRunningError,
 	AuthError,
@@ -79,20 +79,20 @@ function makeFetchMock(
 	return { fetch: fetchFn, calls };
 }
 
-describe("ScratchPadClient", () => {
+describe("AizuchiClient", () => {
 	it("status() hits /v1/app/status without an Authorization header", async () => {
 		const { fetch, calls } = makeFetchMock(
 			() =>
 				new Response(
 					JSON.stringify({
 						ok: true,
-						app: { version: "1.2.3", name: "Scratch Pad" },
+						app: { version: "1.2.3", name: "Aizuchi" },
 						ipc: { version: 1, startedAt: 17_000_000 },
 					}),
 					{ status: 200, headers: { "content-type": "application/json" } },
 				),
 		);
-		const client = await ScratchPadClient.create({ baseDir: tmpDir, fetch });
+		const client = await AizuchiClient.create({ baseDir: tmpDir, fetch });
 		const status = await client.status();
 		expect(status.ok).toBe(true);
 		expect(status.ipc.version).toBe(1);
@@ -118,7 +118,7 @@ describe("ScratchPadClient", () => {
 					headers: { "content-type": "application/json" },
 				}),
 		);
-		const client = await ScratchPadClient.create({ baseDir: tmpDir, fetch });
+		const client = await AizuchiClient.create({ baseDir: tmpDir, fetch });
 		const pads = await client.listPads();
 		expect(pads).toEqual(fakePads);
 		expect(calls[0].headers.authorization).toBe(`Bearer ${VALID_TOKEN}`);
@@ -128,7 +128,7 @@ describe("ScratchPadClient", () => {
 		const { fetch, calls } = makeFetchMock(
 			() => new Response(JSON.stringify({ pads: [] }), { status: 200 }),
 		);
-		const client = await ScratchPadClient.create({ baseDir: tmpDir, fetch });
+		const client = await AizuchiClient.create({ baseDir: tmpDir, fetch });
 		await client.listPads({ only: "hidden" });
 		expect(calls[0].url).toBe("http://127.0.0.1:12345/v1/pads?only=hidden");
 	});
@@ -147,7 +147,7 @@ describe("ScratchPadClient", () => {
 					{ status: 200 },
 				),
 		);
-		const client = await ScratchPadClient.create({ baseDir: tmpDir, fetch });
+		const client = await AizuchiClient.create({ baseDir: tmpDir, fetch });
 		await client.createPad({ body: "hi", title: "t" });
 		expect(calls[0].method).toBe("POST");
 		expect(calls[0].headers["content-type"]).toBe("application/json");
@@ -156,7 +156,7 @@ describe("ScratchPadClient", () => {
 
 	it("deletePad() handles 204 and returns void", async () => {
 		const { fetch } = makeFetchMock(() => new Response(null, { status: 204 }));
-		const client = await ScratchPadClient.create({ baseDir: tmpDir, fetch });
+		const client = await AizuchiClient.create({ baseDir: tmpDir, fetch });
 		const result = await client.deletePad("abc");
 		expect(result).toBeUndefined();
 	});
@@ -171,7 +171,7 @@ describe("ScratchPadClient", () => {
 					{ status: 404 },
 				),
 		);
-		const client = await ScratchPadClient.create({ baseDir: tmpDir, fetch });
+		const client = await AizuchiClient.create({ baseDir: tmpDir, fetch });
 		await expect(client.getPad("missing")).rejects.toBeInstanceOf(
 			NotFoundError,
 		);
@@ -187,7 +187,7 @@ describe("ScratchPadClient", () => {
 					{ status: 403 },
 				),
 		);
-		const client = await ScratchPadClient.create({ baseDir: tmpDir, fetch });
+		const client = await AizuchiClient.create({ baseDir: tmpDir, fetch });
 		await expect(client.listPads()).rejects.toBeInstanceOf(AuthError);
 	});
 
@@ -201,7 +201,7 @@ describe("ScratchPadClient", () => {
 					{ status: 400 },
 				),
 		);
-		const client = await ScratchPadClient.create({ baseDir: tmpDir, fetch });
+		const client = await AizuchiClient.create({ baseDir: tmpDir, fetch });
 		await expect(client.updatePad("x", { body: "y" })).rejects.toBeInstanceOf(
 			ValidationError,
 		);
@@ -217,7 +217,7 @@ describe("ScratchPadClient", () => {
 					{ status: 409 },
 				),
 		);
-		const client = await ScratchPadClient.create({ baseDir: tmpDir, fetch });
+		const client = await AizuchiClient.create({ baseDir: tmpDir, fetch });
 		await expect(client.startMeeting("live")).rejects.toBeInstanceOf(
 			ConflictError,
 		);
@@ -233,7 +233,7 @@ describe("ScratchPadClient", () => {
 					{ status: 405 },
 				),
 		);
-		const client = await ScratchPadClient.create({ baseDir: tmpDir, fetch });
+		const client = await AizuchiClient.create({ baseDir: tmpDir, fetch });
 		try {
 			await client.startMeeting("live");
 			throw new Error("expected throw");
@@ -253,7 +253,7 @@ describe("ScratchPadClient", () => {
 		const { fetch } = makeFetchMock(() => {
 			throw refused;
 		});
-		const client = await ScratchPadClient.create({ baseDir: tmpDir, fetch });
+		const client = await AizuchiClient.create({ baseDir: tmpDir, fetch });
 		await expect(client.status()).rejects.toBeInstanceOf(AppNotRunningError);
 	});
 
@@ -274,7 +274,7 @@ describe("ScratchPadClient", () => {
 					{ status: 200 },
 				),
 		);
-		const client = await ScratchPadClient.create({ baseDir: tmpDir, fetch });
+		const client = await AizuchiClient.create({ baseDir: tmpDir, fetch });
 		await client.renameMeeting("m", "Nice name");
 		const sent = JSON.parse(calls[0].body ?? "{}");
 		expect(sent).toEqual({ name: "Nice name" });

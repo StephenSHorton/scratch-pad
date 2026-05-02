@@ -1,14 +1,15 @@
-# Scratch Pad
+# Aizuchi
 
-Desktop sticky notes app (Tauri v2) + MCP server for Claude Code.
+Desktop app (Tauri v2) — live mind-map meetings + Scratch Pad sticky notes — with a bundled MCP server for Claude Code.
 
 ## Architecture
 
-- **Tauri app** (`src-tauri/`) — Rust backend, manages windows, file watching, system tray, auto-updater, P2P networking
-- **Frontend** (`src/`) — React 19, Tailwind v4, Vite 8, TanStack Router
-- **MCP server** (`mcp-server/`) — TypeScript stdio server with 8 tools for notes + 3 tools for multiplayer
+- **Tauri app** (`src-tauri/`) — Rust backend, manages windows, file watching, system tray, auto-updater, P2P networking, IPC server
+- **Frontend** (`src/`) — React 19, Tailwind v4, Vite, TanStack Router
+- **MCP server** (`mcp-server/`) — TypeScript stdio server, bundled as a Tauri sidecar
+- **CLI** (`bin/aizuchi.ts`) — typed wrapper over the IPC server (AIZ-13 line)
 - **P2P networking** (`src-tauri/src/network/`) — mDNS discovery + TCP transport for LAN-based note sharing
-- **Shared contract** — `~/.scratch-pad/notes.json` (local notes), `~/.scratch-pad/remote-notes.json` (peer notes), `~/.scratch-pad/peers.json` (connected peers)
+- **Shared contract** — `~/.aizuchi/notes.json` (local notes), `~/.aizuchi/remote-notes.json` (peer notes), `~/.aizuchi/peers.json` (connected peers)
 
 ## Development
 
@@ -55,19 +56,23 @@ The release workflow:
 
 - `src-tauri/tauri.conf.json` — App config, version, bundle settings, updater pubkey
 - `src-tauri/src/lib.rs` — Core Rust logic (commands, window management, tray, file watcher, updater)
+- `src-tauri/src/cli_server/` — Localhost IPC HTTP server (AIZ-20)
 - `src-tauri/src/network/` — P2P networking module (discovery, transport, protocol, store)
-- `src/routes/index.tsx` — Sticky note React component (markdown rendering, editing, color picker, remote note display)
+- `bin/aizuchi.ts` — Base CLI (AIZ-13 line)
+- `src/lib/cli-core/` — Typed IPC client (`AizuchiClient`)
+- `src/routes/index.tsx` — Sticky note React component
+- `src/routes/meeting.$id.tsx` — Meeting / mind-map view
 - `src/index.css` — Markdown rendering styles (`.md-body` classes)
-- `mcp-server/src/index.ts` — MCP server implementation (local + multiplayer tools)
+- `mcp-server/src/index.ts` — MCP server implementation
 - `.github/workflows/release.yml` — CI/CD for building and publishing releases
 - `src-tauri/icons/tray-icon.png` — System tray icon (embedded at compile time via `include_bytes!`)
 
 ## MCP server
 
-The MCP sidecar binary is bundled inside the app at `Scratch Pad.app/Contents/MacOS/scratch-pad-mcp`. Users configure Claude Code to point to it:
+The MCP sidecar binary is bundled inside the app at `Aizuchi.app/Contents/MacOS/aizuchi-mcp`. Users configure Claude Code to point to it:
 
 ```bash
-claude mcp add --transport stdio --scope user scratch-pad -- "/Applications/Scratch Pad.app/Contents/MacOS/scratch-pad-mcp"
+claude mcp add --transport stdio --scope user aizuchi -- "/Applications/Aizuchi.app/Contents/MacOS/aizuchi-mcp"
 ```
 
 To rebuild the sidecar locally:
@@ -77,11 +82,11 @@ bun run build:mcp
 
 ## Multiplayer (P2P Networking)
 
-Scratch Pad instances on the same LAN automatically discover each other via mDNS and can share notes in real-time over TCP. This enables a **Decentralized Claude Network** where Claude Code instances share context, decisions, and updates without a central server.
+Aizuchi instances on the same LAN automatically discover each other via mDNS and can share notes in real-time over TCP.
 
 ### How it works
 
-1. Each running Scratch Pad app registers itself on the local network via mDNS (`_scratchpad._tcp.local.`)
+1. Each running Aizuchi app registers itself on the local network via mDNS (`_aizuchi._tcp.local.`)
 2. Peers discover each other automatically — no configuration needed
 3. Notes created with a `scope` other than `"local"` get broadcast to all connected peers
 4. Remote notes appear as read-only floating stickies with sender attribution
@@ -99,12 +104,14 @@ Peer receives --> stores in memory --> writes remote-notes.json --> creates wind
 
 | File | Purpose | Written by |
 |------|---------|------------|
-| `~/.scratch-pad/notes.json` | Local notes | Tauri app + MCP server |
-| `~/.scratch-pad/remote-notes.json` | Notes from peers | Tauri app (network module) |
-| `~/.scratch-pad/peers.json` | Connected peers | Tauri app (network module) |
-| `~/.scratch-pad/subscriptions.json` | Scope filter prefs | MCP server (`pad_subscribe`) |
-| `~/.scratch-pad/.share-{noteId}` | Signal: share a note | MCP server (transient) |
-| `~/.scratch-pad/.retract-{noteId}` | Signal: retract a note | MCP server (transient) |
+| `~/.aizuchi/notes.json` | Local notes | Tauri app + MCP server |
+| `~/.aizuchi/remote-notes.json` | Notes from peers | Tauri app (network module) |
+| `~/.aizuchi/peers.json` | Connected peers | Tauri app (network module) |
+| `~/.aizuchi/subscriptions.json` | Scope filter prefs | MCP server (`pad_subscribe`) |
+| `~/.aizuchi/.share-{noteId}` | Signal: share a note | MCP server (transient) |
+| `~/.aizuchi/.retract-{noteId}` | Signal: retract a note | MCP server (transient) |
+| `~/.aizuchi/cli-token` | IPC bearer token (mode 0600) | Tauri app (cli_server) |
+| `~/.aizuchi/cli.port` | IPC bound port | Tauri app (cli_server) |
 
 ### Network module structure (`src-tauri/src/network/`)
 
@@ -123,10 +130,10 @@ Peer receives --> stores in memory --> writes remote-notes.json --> creates wind
 
 ## Signing
 
-- **Updater signing** — Uses a minisign keypair. Private key at `~/.tauri/scratch-pad.key`, public key in `tauri.conf.json`. GitHub secrets: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+- **Updater signing** — Uses a minisign keypair. Private key at `~/.tauri/aizuchi.key`, public key in `tauri.conf.json`. GitHub secrets: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
 - **Apple code signing** — Not yet configured. App is currently unsigned, requiring users to run `xattr -cr` after install.
 
 ## Known issues
 
-- macOS quarantines the app on first install (unsigned). Workaround: `xattr -cr /Applications/Scratch\ Pad.app`
+- macOS quarantines the app on first install (unsigned). Workaround: `xattr -cr /Applications/Aizuchi.app`
 - Auto-updater may also be affected by quarantine on the downloaded update binary

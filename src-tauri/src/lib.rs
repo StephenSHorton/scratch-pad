@@ -92,11 +92,11 @@ pub struct LiveAudioState {
 
 pub(crate) fn notes_dir() -> PathBuf {
     let home = dirs::home_dir().expect("could not resolve home directory");
-    home.join(".scratch-pad")
+    home.join(".aizuchi")
 }
 
 fn log_file() -> PathBuf {
-    notes_dir().join("scratch-pad.log")
+    notes_dir().join("aizuchi.log")
 }
 
 pub(crate) fn log(msg: &str) {
@@ -239,7 +239,7 @@ fn open_logs_window(app: &AppHandle) {
         return;
     }
     WebviewWindowBuilder::new(app, "logs", WebviewUrl::default())
-        .title("Scratch Pad Logs")
+        .title("Aizuchi Logs")
         .decorations(false)
         .transparent(true)
         .background_color(TRANSPARENT_BG)
@@ -1179,7 +1179,7 @@ fn create_note_window(app: &AppHandle, note: &Note, _index: usize) {
         .unwrap_or(false);
 
     let builder = WebviewWindowBuilder::new(app, &note.id, WebviewUrl::default())
-        .title(note.title.as_deref().unwrap_or("Scratch Pad"))
+        .title(note.title.as_deref().unwrap_or("Aizuchi"))
         .decorations(false)
         .transparent(true)
         .background_color(TRANSPARENT_BG)
@@ -1407,10 +1407,10 @@ pub fn run() {
             // Build the macOS menu bar
             let app_submenu = Submenu::with_items(
                 app,
-                "Scratch Pad",
+                "Aizuchi",
                 true,
                 &[
-                    &PredefinedMenuItem::about(app, Some("About Scratch Pad"), Some(tauri::menu::AboutMetadata {
+                    &PredefinedMenuItem::about(app, Some("About Aizuchi"), Some(tauri::menu::AboutMetadata {
                         version: Some(app.config().version.clone().unwrap_or_default()),
                         ..Default::default()
                     }))?,
@@ -1528,7 +1528,7 @@ pub fn run() {
                     &PredefinedMenuItem::separator(app)?,
                     &MenuItem::with_id(app, "tray_aizuchi", "Aizuchi prototype", true, None::<&str>)?,
                     &PredefinedMenuItem::separator(app)?,
-                    &MenuItem::with_id(app, "tray_quit", "Quit Scratch Pad", true, None::<&str>)?,
+                    &MenuItem::with_id(app, "tray_quit", "Quit Aizuchi", true, None::<&str>)?,
                 ],
             )?;
 
@@ -1551,7 +1551,7 @@ pub fn run() {
             if notes.is_empty() {
                 let welcome = Note {
                     id: uuid::Uuid::new_v4().to_string(),
-                    title: Some("Welcome to Scratch Pad".to_string()),
+                    title: Some("Welcome to Aizuchi".to_string()),
                     body: "Floating desktop notes for Claude Code.\n\n\
                            **Quick start:**\n\
                            - Double-click text to edit\n\
@@ -1560,7 +1560,7 @@ pub fn run() {
                            - To permanently delete, open the color picker and choose Delete pad\n\n\
                            **Connect to Claude Code:**\n\
                            ```\n\
-                           claude mcp add --transport stdio --scope user scratch-pad -- \"/Applications/Scratch Pad.app/Contents/MacOS/scratch-pad-mcp\"\n\
+                           claude mcp add --transport stdio --scope user aizuchi -- \"/Applications/Aizuchi.app/Contents/MacOS/aizuchi-mcp\"\n\
                            ```\n\n\
                            Then restart Claude Code and say:\n\
                            *\"Write that to a scratch pad\"*"
@@ -1628,7 +1628,7 @@ pub fn run() {
                                                 .and_then(|s| s.settings.lock().ok().map(|s| s.always_on_top))
                                                 .unwrap_or(false);
                                             if let Ok(window) = WebviewWindowBuilder::new(&handle, "logs", WebviewUrl::default())
-                                                .title("Scratch Pad Logs")
+                                                .title("Aizuchi Logs")
                                                 .decorations(false)
                                                 .transparent(true)
                                                 .always_on_top(always_on_top)
@@ -1892,7 +1892,7 @@ pub fn run() {
 
             // Start localhost IPC HTTP server (AIZ-20). Bound to
             // 127.0.0.1 with a per-install bearer token; auto-discovered
-            // by the CLI / MCP via files in `~/.scratch-pad/`.
+            // by the CLI / MCP via files in `~/.aizuchi/`.
             let ipc_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 match cli_server::start_ipc_server(ipc_handle.clone()).await {
@@ -2007,7 +2007,7 @@ async fn check_for_updates(handle: AppHandle, silent: bool) {
             // Show update note
             let note = Note {
                 id: "update-status".to_string(),
-                title: Some("Updating Scratch Pad".to_string()),
+                title: Some("Updating Aizuchi".to_string()),
                 body: format!(
                     "Downloading **v{}**...\n\nThe update will take effect next time you launch the app.",
                     update.version
@@ -2032,7 +2032,7 @@ async fn check_for_updates(handle: AppHandle, silent: bool) {
                 let mut notes = read_notes();
                 if let Some(n) = notes.iter_mut().find(|n| n.id == "update-status") {
                     n.body = format!(
-                        "**v{}** installed! Restart Scratch Pad to use the new version.",
+                        "**v{}** installed! Restart Aizuchi to use the new version.",
                         update.version
                     );
                     n.title = Some("Update Ready".to_string());

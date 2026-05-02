@@ -1,5 +1,5 @@
 /**
- * Integration tests for the `scratch-pad` CLI.
+ * Integration tests for the `aizuchi` CLI.
  *
  * Spawns the binary as a real subprocess so flag parsing, exit codes,
  * and stdout/stderr split match production.
@@ -17,7 +17,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const CLI_PATH = path.join(import.meta.dir, "scratch-pad.ts");
+const CLI_PATH = path.join(import.meta.dir, "aizuchi.ts");
 
 let tmpHome = "";
 
@@ -56,11 +56,11 @@ async function runCli(
 	return { stdout, stderr, exitCode };
 }
 
-describe("scratch-pad CLI", () => {
+describe("aizuchi CLI", () => {
 	it("--version prints a version string and exits 0", async () => {
 		const r = await runCli(["--version"]);
 		expect(r.exitCode).toBe(0);
-		expect(r.stdout).toContain("scratch-pad/");
+		expect(r.stdout).toContain("aizuchi/");
 	});
 
 	it("--help lists every supported command", async () => {
@@ -106,7 +106,7 @@ describe("scratch-pad CLI", () => {
 	});
 
 	it("prints a clean app-not-running message when discovery files are missing", async () => {
-		// HOME points at an empty tmpdir → ~/.scratch-pad/cli-token won't
+		// HOME points at an empty tmpdir → ~/.aizuchi/cli-token won't
 		// exist → the client throws AppNotRunningError before any HTTP
 		// happens.
 		const r = await runCli(["status"], { HOME: tmpHome });

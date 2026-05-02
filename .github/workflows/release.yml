@@ -19,7 +19,7 @@ jobs:
       - run: bun install
       - run: cd mcp-server && bun install
       - name: Build MCP sidecar
-        run: cd mcp-server && bun build --compile --minify --target=bun-darwin-arm64 src/index.ts --outfile ../src-tauri/binaries/scratch-pad-mcp-aarch64-apple-darwin
+        run: cd mcp-server && bun build --compile --minify --target=bun-darwin-arm64 src/index.ts --outfile ../src-tauri/binaries/aizuchi-mcp-aarch64-apple-darwin
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
@@ -28,7 +28,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: 'Scratch Pad ${{ github.ref_name }}'
+          releaseName: 'Aizuchi ${{ github.ref_name }}'
           releaseBody: 'See the assets below to download and install.'
           releaseDraft: false
           prerelease: false
@@ -47,7 +47,7 @@ jobs:
       - run: bun install
       - run: cd mcp-server && bun install
       - name: Build MCP sidecar
-        run: cd mcp-server && bun build --compile --minify --target=bun-darwin-x64 src/index.ts --outfile ../src-tauri/binaries/scratch-pad-mcp-x86_64-apple-darwin
+        run: cd mcp-server && bun build --compile --minify --target=bun-darwin-x64 src/index.ts --outfile ../src-tauri/binaries/aizuchi-mcp-x86_64-apple-darwin
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
@@ -56,7 +56,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: 'Scratch Pad ${{ github.ref_name }}'
+          releaseName: 'Aizuchi ${{ github.ref_name }}'
           releaseBody: 'See the assets below to download and install.'
           releaseDraft: false
           prerelease: false
@@ -75,7 +75,7 @@ jobs:
       - run: bun install
       - run: cd mcp-server && bun install
       - name: Build MCP sidecar
-        run: cd mcp-server && bun build --compile --minify --target=bun-windows-x64 src/index.ts --outfile ../src-tauri/binaries/scratch-pad-mcp-x86_64-pc-windows-msvc.exe
+        run: cd mcp-server && bun build --compile --minify --target=bun-windows-x64 src/index.ts --outfile ../src-tauri/binaries/aizuchi-mcp-x86_64-pc-windows-msvc.exe
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
@@ -84,7 +84,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: 'Scratch Pad ${{ github.ref_name }}'
+          releaseName: 'Aizuchi ${{ github.ref_name }}'
           releaseBody: 'See the assets below to download and install.'
           releaseDraft: false
           prerelease: false
@@ -121,14 +121,14 @@ jobs:
           ls -la bundles/
 
           # Sign macOS bundles
-          cargo tauri signer sign bundles/Scratch.Pad_aarch64.app.tar.gz --private-key-path <(echo "$TAURI_SIGNING_PRIVATE_KEY") --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" 2>/dev/null || \
-          cargo tauri signer sign "bundles/Scratch.Pad_aarch64.app.tar.gz" -k "$TAURI_SIGNING_PRIVATE_KEY" -p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+          cargo tauri signer sign bundles/Aizuchi_aarch64.app.tar.gz --private-key-path <(echo "$TAURI_SIGNING_PRIVATE_KEY") --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" 2>/dev/null || \
+          cargo tauri signer sign "bundles/Aizuchi_aarch64.app.tar.gz" -k "$TAURI_SIGNING_PRIVATE_KEY" -p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
 
-          cargo tauri signer sign bundles/Scratch.Pad_x64.app.tar.gz --private-key-path <(echo "$TAURI_SIGNING_PRIVATE_KEY") --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" 2>/dev/null || \
-          cargo tauri signer sign "bundles/Scratch.Pad_x64.app.tar.gz" -k "$TAURI_SIGNING_PRIVATE_KEY" -p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
+          cargo tauri signer sign bundles/Aizuchi_x64.app.tar.gz --private-key-path <(echo "$TAURI_SIGNING_PRIVATE_KEY") --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" 2>/dev/null || \
+          cargo tauri signer sign "bundles/Aizuchi_x64.app.tar.gz" -k "$TAURI_SIGNING_PRIVATE_KEY" -p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
 
-          AARCH64_SIG=$(cat bundles/Scratch.Pad_aarch64.app.tar.gz.sig)
-          X64_SIG=$(cat bundles/Scratch.Pad_x64.app.tar.gz.sig)
+          AARCH64_SIG=$(cat bundles/Aizuchi_aarch64.app.tar.gz.sig)
+          X64_SIG=$(cat bundles/Aizuchi_x64.app.tar.gz.sig)
 
           echo "aarch64 sig length: ${#AARCH64_SIG}"
           echo "x64 sig length: ${#X64_SIG}"
@@ -154,16 +154,16 @@ jobs:
           cat > latest.json << EOF
           {
             "version": "${VERSION}",
-            "notes": "Scratch Pad ${TAG}",
+            "notes": "Aizuchi ${TAG}",
             "pub_date": "${PUB_DATE}",
             "platforms": {
               "darwin-aarch64": {
                 "signature": "${AARCH64_SIG}",
-                "url": "${REPO}/releases/download/${TAG}/Scratch.Pad_aarch64.app.tar.gz"
+                "url": "${REPO}/releases/download/${TAG}/Aizuchi_aarch64.app.tar.gz"
               },
               "darwin-x86_64": {
                 "signature": "${X64_SIG}",
-                "url": "${REPO}/releases/download/${TAG}/Scratch.Pad_x64.app.tar.gz"
+                "url": "${REPO}/releases/download/${TAG}/Aizuchi_x64.app.tar.gz"
               }${WIN_PLATFORM}
             }
           }

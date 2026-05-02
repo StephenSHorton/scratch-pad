@@ -1,5 +1,5 @@
 /**
- * Typed TS client for the Scratch Pad IPC server (v1 contract).
+ * Typed TS client for the Aizuchi IPC server (v1 contract).
  *
  * Mirrors every endpoint declared in
  * `src-tauri/src/cli_server/routes.rs` 1:1. Server error codes are
@@ -8,7 +8,7 @@
  * envelope JSON themselves.
  *
  * Usage:
- *   const client = await ScratchPadClient.create();
+ *   const client = await AizuchiClient.create();
  *   const status = await client.status();
  */
 
@@ -29,9 +29,9 @@ import type {
 	StartMeetingResponse,
 } from "./types";
 
-/** Optional knobs for `ScratchPadClient.create()`. */
-export interface ScratchPadClientOptions {
-	/** Override the discovery base dir (default: `~/.scratch-pad/`). */
+/** Optional knobs for `AizuchiClient.create()`. */
+export interface AizuchiClientOptions {
+	/** Override the discovery base dir (default: `~/.aizuchi/`). */
 	baseDir?: string;
 	/**
 	 * Override `globalThis.fetch`. Used by tests to stub HTTP without
@@ -49,7 +49,7 @@ interface RequestOptions {
 
 const PROTOCOL_PREFIX = "/v1";
 
-export class ScratchPadClient {
+export class AizuchiClient {
 	private readonly baseUrl: string;
 	private readonly token: string;
 	private readonly fetchImpl: typeof globalThis.fetch;
@@ -66,8 +66,8 @@ export class ScratchPadClient {
 	 * `TokenPermsError` if the token file is group/world-readable.
 	 */
 	static async create(
-		options: ScratchPadClientOptions = {},
-	): Promise<ScratchPadClient> {
+		options: AizuchiClientOptions = {},
+	): Promise<AizuchiClient> {
 		const config = await loadIpcConfig(options.baseDir);
 		const fetchImpl = options.fetch ?? globalThis.fetch;
 		if (typeof fetchImpl !== "function") {
@@ -76,14 +76,14 @@ export class ScratchPadClient {
 				"global fetch is not available; pass options.fetch explicitly.",
 			);
 		}
-		return new ScratchPadClient(config, fetchImpl);
+		return new AizuchiClient(config, fetchImpl);
 	}
 
 	/** Construct a client from an explicit config (skips discovery). */
 	static fromConfig(
 		config: IpcConfig,
 		options: { fetch?: typeof globalThis.fetch } = {},
-	): ScratchPadClient {
+	): AizuchiClient {
 		const fetchImpl = options.fetch ?? globalThis.fetch;
 		if (typeof fetchImpl !== "function") {
 			throw new IpcClientError(
@@ -91,7 +91,7 @@ export class ScratchPadClient {
 				"global fetch is not available; pass options.fetch explicitly.",
 			);
 		}
-		return new ScratchPadClient(config, fetchImpl);
+		return new AizuchiClient(config, fetchImpl);
 	}
 
 	// =====================================================================
@@ -309,7 +309,7 @@ function mapNetworkError(err: unknown): IpcClientError {
 		lower.includes("connection refused")
 	) {
 		return new AppNotRunningError(
-			"Could not connect to the Scratch Pad IPC server. The discovery file may be stale — is the app actually running?",
+			"Could not connect to the Aizuchi IPC server. The discovery file may be stale — is the app actually running?",
 			err,
 		);
 	}

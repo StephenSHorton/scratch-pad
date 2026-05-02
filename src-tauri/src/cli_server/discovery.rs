@@ -1,5 +1,5 @@
 //! Atomic write of `cli.port` and `cli.json` discovery files in
-//! `~/.scratch-pad/`. Both are mode 0600. Removed by the lifecycle
+//! `~/.aizuchi/`. Both are mode 0600. Removed by the lifecycle
 //! hook on graceful shutdown — see `lib.rs`'s `RunEvent::ExitRequested`.
 
 use std::fs;

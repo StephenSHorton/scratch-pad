@@ -1,7 +1,7 @@
 //! CLI token generation, persistence, and constant-time comparison.
 //!
 //! The token is 32 random bytes hex-encoded (64 chars), persisted to
-//! `~/.scratch-pad/cli-token` with mode 0600. It survives across launches
+//! `~/.aizuchi/cli-token` with mode 0600. It survives across launches
 //! so already-authorised CLIs don't have to re-fetch on every restart.
 
 use std::fs;
@@ -13,7 +13,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use subtle::ConstantTimeEq;
 
-/// Filename used inside `~/.scratch-pad/`.
+/// Filename used inside `~/.aizuchi/`.
 pub const TOKEN_FILENAME: &str = "cli-token";
 
 /// Length of the random token, in bytes (hex-encoded length is 2x this).
@@ -27,7 +27,7 @@ pub const TOKEN_HEX_LEN: usize = TOKEN_BYTES * 2;
 /// On success returns the hex-encoded 64-char token. The file is created
 /// (or repaired) with mode 0600. On Unix, if the existing file has wrong
 /// permissions the function logs a warning and `chmod 0600` rather than
-/// refusing — `cp -r` of `~/.scratch-pad/` shouldn't brick the app.
+/// refusing — `cp -r` of `~/.aizuchi/` shouldn't brick the app.
 pub fn load_or_generate(base: &Path) -> Result<String, String> {
     fs::create_dir_all(base).map_err(|e| format!("create token dir: {e}"))?;
     let path = token_path(base);

@@ -1,6 +1,6 @@
 /**
  * Discovery + auth: read the bound port and bearer token from
- * `~/.scratch-pad/`, verify the token file's perms, and return a config
+ * `~/.aizuchi/`, verify the token file's perms, and return a config
  * a caller can hand to `fetch`.
  *
  * Mirrors the server-side contract in
@@ -17,9 +17,9 @@ import path from "node:path";
 import { AppNotRunningError, IpcClientError, TokenPermsError } from "./errors";
 import type { IpcConfig } from "./types";
 
-/** `~/.scratch-pad/` — the canonical location for the discovery files. */
+/** `~/.aizuchi/` — the canonical location for the discovery files. */
 export function defaultBaseDir(): string {
-	return path.join(os.homedir(), ".scratch-pad");
+	return path.join(os.homedir(), ".aizuchi");
 }
 
 const TOKEN_FILENAME = "cli-token";
@@ -29,7 +29,7 @@ const PORT_FILENAME = "cli.port";
  * Read + verify the discovery files. Throws a typed error class for
  * every recoverable failure mode.
  *
- * @param baseDir Override `~/.scratch-pad/`. Defaults to the user's
+ * @param baseDir Override `~/.aizuchi/`. Defaults to the user's
  * home dir; tests pass a temp dir.
  */
 export async function loadIpcConfig(baseDir?: string): Promise<IpcConfig> {
@@ -53,7 +53,7 @@ async function readToken(tokenPath: string, baseDir: string): Promise<string> {
 	} catch (err) {
 		if (isErrnoCode(err, "ENOENT")) {
 			throw new AppNotRunningError(
-				`Token file not found at ${tokenPath}. Is the Scratch Pad app running?`,
+				`Token file not found at ${tokenPath}. Is the Aizuchi app running?`,
 			);
 		}
 		throw new IpcClientError(
@@ -64,13 +64,13 @@ async function readToken(tokenPath: string, baseDir: string): Promise<string> {
 	}
 
 	// Symlink-swap defense: realpath the token, assert it's still inside
-	// `~/.scratch-pad/`. Refuses to read a token that's been redirected
+	// `~/.aizuchi/`. Refuses to read a token that's been redirected
 	// to (e.g.) `/tmp/attacker-token`.
 	const resolvedDir = await fs.realpath(baseDir);
 	const resolvedToken = await fs.realpath(tokenPath);
 	if (!isPathInside(resolvedToken, resolvedDir)) {
 		throw new TokenPermsError(
-			`Token path resolves outside the scratch-pad dir (got ${resolvedToken}). Refusing to read.`,
+			`Token path resolves outside the aizuchi dir (got ${resolvedToken}). Refusing to read.`,
 		);
 	}
 
@@ -91,7 +91,7 @@ async function readToken(tokenPath: string, baseDir: string): Promise<string> {
 	if (trimmed.length === 0) {
 		throw new IpcClientError(
 			"discovery_error",
-			`Token file ${tokenPath} is empty. Restart the Scratch Pad app.`,
+			`Token file ${tokenPath} is empty. Restart the Aizuchi app.`,
 		);
 	}
 	return trimmed;
@@ -104,7 +104,7 @@ async function readPort(portPath: string): Promise<number> {
 	} catch (err) {
 		if (isErrnoCode(err, "ENOENT")) {
 			throw new AppNotRunningError(
-				`Port file not found at ${portPath}. Is the Scratch Pad app running?`,
+				`Port file not found at ${portPath}. Is the Aizuchi app running?`,
 			);
 		}
 		throw new IpcClientError(

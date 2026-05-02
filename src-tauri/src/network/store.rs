@@ -233,5 +233,5 @@ impl RemoteNoteStore {
 
 fn notes_dir() -> PathBuf {
 	let home = dirs::home_dir().expect("could not resolve home directory");
-	home.join(".scratch-pad")
+	home.join(".aizuchi")
 }

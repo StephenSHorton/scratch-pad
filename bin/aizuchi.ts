@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * `scratch-pad` — base CLI for the Scratch Pad / Aizuchi desktop app.
+ * `aizuchi` — base CLI for the Aizuchi desktop app.
  *
  * Phase 3 of AIZ-13. Wraps the typed IPC client at `src/lib/cli-core/`
  * with a friendly command surface. The full method surface is exposed
@@ -15,7 +15,7 @@
  *
  * Errors:
  *   AppNotRunning   Friendly one-liner. Exit 1.
- *   Other           "scratch-pad: <message>" to stderr. Exit 1.
+ *   Other           "aizuchi: <message>" to stderr. Exit 1.
  *   --debug         Also print the stack trace.
  */
 
@@ -27,12 +27,12 @@ import path from "node:path";
 import { cac } from "cac";
 
 import {
+	AizuchiClient,
 	AppNotRunningError,
 	IpcClientError,
 	type MeetingMeta,
 	type Note,
 	NotFoundError,
-	ScratchPadClient,
 } from "../src/lib/cli-core";
 
 // ---------------------------------------------------------------------------
@@ -77,12 +77,12 @@ interface GlobalFlags {
 function fatal(err: unknown, flags: GlobalFlags): never {
 	if (err instanceof AppNotRunningError) {
 		process.stderr.write(
-			"scratch-pad: app isn't running. Start it with `open -a 'Scratch Pad'` or run `bun tauri dev` from the repo.\n",
+			"aizuchi: app isn't running. Start it with `open -a 'Aizuchi'` or run `bun tauri dev` from the repo.\n",
 		);
 		process.exit(1);
 	}
 	const message = err instanceof Error ? err.message : String(err);
-	process.stderr.write(`scratch-pad: ${message}\n`);
+	process.stderr.write(`aizuchi: ${message}\n`);
 	if (flags.debug && err instanceof Error && err.stack) {
 		process.stderr.write(`${err.stack}\n`);
 	}
@@ -234,7 +234,7 @@ async function editInExternalEditor(
 	updated: string;
 	exitCode: number;
 }> {
-	const tmpName = `scratch-pad-${id}-${Math.random().toString(36).slice(2, 10)}.md`;
+	const tmpName = `aizuchi-${id}-${Math.random().toString(36).slice(2, 10)}.md`;
 	const tmpPath = path.join(os.tmpdir(), tmpName);
 	await fs.writeFile(tmpPath, initial, "utf-8");
 	try {
@@ -259,7 +259,7 @@ async function editInExternalEditor(
 // CLI definition
 // ---------------------------------------------------------------------------
 
-const cli = cac("scratch-pad");
+const cli = cac("aizuchi");
 
 // Global flags. Every subcommand inherits these.
 cli.option("--json", "Emit canonical JSON instead of human output");
@@ -276,7 +276,7 @@ cli
 	.action(async (opts) => {
 		const flags = readFlags(opts);
 		try {
-			const client = await ScratchPadClient.create();
+			const client = await AizuchiClient.create();
 			const onlyHidden = opts.hidden || opts.onlyHidden;
 			const includeHidden = opts.all || opts.includeHidden;
 			const listOpts = onlyHidden
@@ -311,7 +311,7 @@ cli
 				}
 				body = (await readAllStdin()).replace(/\n+$/, "");
 			}
-			const client = await ScratchPadClient.create();
+			const client = await AizuchiClient.create();
 			const note = await client.createPad({
 				body,
 				title: opts.title,
@@ -331,7 +331,7 @@ cli
 	.action(async (id: string, opts) => {
 		const flags = readFlags(opts);
 		try {
-			const client = await ScratchPadClient.create();
+			const client = await AizuchiClient.create();
 			const note = await client.getPad(id);
 			if (flags.json) emitJson(note);
 			else process.stdout.write(`${note.body}\n`);
@@ -347,13 +347,13 @@ cli
 	.action(async (id: string, opts) => {
 		const flags = readFlags(opts);
 		try {
-			const client = await ScratchPadClient.create();
+			const client = await AizuchiClient.create();
 			const note = await client.getPad(id);
 			const original = note.body;
 			const { updated, exitCode } = await editInExternalEditor(original, id);
 			if (exitCode !== 0) {
 				process.stderr.write(
-					`scratch-pad: editor exited ${exitCode}; not saving.\n`,
+					`aizuchi: editor exited ${exitCode}; not saving.\n`,
 				);
 				process.exit(1);
 			}
@@ -377,7 +377,7 @@ cli
 	.action(async (id: string, opts) => {
 		const flags = readFlags(opts);
 		try {
-			const client = await ScratchPadClient.create();
+			const client = await AizuchiClient.create();
 			await client.deletePad(id);
 			if (flags.json) emitJson({ ok: true, id });
 			else process.stdout.write(`Deleted ${id}.\n`);
@@ -393,7 +393,7 @@ cli
 	.action(async (id: string, opts) => {
 		const flags = readFlags(opts);
 		try {
-			const client = await ScratchPadClient.create();
+			const client = await AizuchiClient.create();
 			await client.focusPad(id);
 			if (flags.json) emitJson({ ok: true, id });
 			else process.stdout.write(`Focused ${id}.\n`);
@@ -417,19 +417,17 @@ cli
 		const known = new Set(["hide", "show", "show-hidden"]);
 		if (!known.has(subcommand)) {
 			process.stderr.write(
-				`scratch-pad: unknown pad subcommand '${subcommand}'. Try: hide, show, show-hidden.\n`,
+				`aizuchi: unknown pad subcommand '${subcommand}'. Try: hide, show, show-hidden.\n`,
 			);
 			process.exit(2);
 		}
 		const requiresArg: Record<string, true> = { hide: true, show: true };
 		if (requiresArg[subcommand] && !arg) {
-			process.stderr.write(
-				`scratch-pad: pad ${subcommand} requires the pad id.\n`,
-			);
+			process.stderr.write(`aizuchi: pad ${subcommand} requires the pad id.\n`);
 			process.exit(1);
 		}
 		try {
-			const client = await ScratchPadClient.create();
+			const client = await AizuchiClient.create();
 			switch (subcommand) {
 				case "hide": {
 					try {
@@ -438,7 +436,7 @@ cli
 						else process.stdout.write(`Hidden: ${arg}\n`);
 					} catch (e) {
 						if (e instanceof NotFoundError) {
-							process.stderr.write(`scratch-pad: pad not found: ${arg}\n`);
+							process.stderr.write(`aizuchi: pad not found: ${arg}\n`);
 							process.exit(1);
 						}
 						throw e;
@@ -452,7 +450,7 @@ cli
 						else process.stdout.write(`Restored: ${arg}\n`);
 					} catch (e) {
 						if (e instanceof NotFoundError) {
-							process.stderr.write(`scratch-pad: pad not found: ${arg}\n`);
+							process.stderr.write(`aizuchi: pad not found: ${arg}\n`);
 							process.exit(1);
 						}
 						throw e;
@@ -472,7 +470,7 @@ cli
 				}
 				default:
 					process.stderr.write(
-						`scratch-pad: unknown pad subcommand '${subcommand}'. Try: hide, show, show-hidden.\n`,
+						`aizuchi: unknown pad subcommand '${subcommand}'. Try: hide, show, show-hidden.\n`,
 					);
 					process.exit(2);
 			}
@@ -512,7 +510,7 @@ cli
 			]);
 			if (!known.has(subcommand)) {
 				process.stderr.write(
-					`scratch-pad: unknown meeting subcommand '${subcommand}'. Try: start, stop, ls, open, resume, rm, rename.\n`,
+					`aizuchi: unknown meeting subcommand '${subcommand}'. Try: start, stop, ls, open, resume, rm, rename.\n`,
 				);
 				process.exit(2);
 			}
@@ -525,18 +523,18 @@ cli
 			};
 			if (requiresId[subcommand] && !id) {
 				process.stderr.write(
-					`scratch-pad: meeting ${subcommand} requires the meeting id.\n`,
+					`aizuchi: meeting ${subcommand} requires the meeting id.\n`,
 				);
 				process.exit(1);
 			}
 			if (subcommand === "rename" && (arg === undefined || arg === "")) {
 				process.stderr.write(
-					"scratch-pad: meeting rename requires a non-empty name.\n",
+					"aizuchi: meeting rename requires a non-empty name.\n",
 				);
 				process.exit(1);
 			}
 			try {
-				const client = await ScratchPadClient.create();
+				const client = await AizuchiClient.create();
 				switch (subcommand) {
 					case "ls": {
 						const meetings = await client.listMeetings();
@@ -563,7 +561,7 @@ cli
 					case "stop": {
 						if (!id) {
 							process.stderr.write(
-								"scratch-pad: meeting stop requires the meeting id. Use `scratch-pad meeting ls` to find it.\n",
+								"aizuchi: meeting stop requires the meeting id. Use `aizuchi meeting ls` to find it.\n",
 							);
 							process.exit(1);
 						}
@@ -578,7 +576,7 @@ cli
 					case "open": {
 						if (!id) {
 							process.stderr.write(
-								"scratch-pad: meeting open requires the meeting id.\n",
+								"aizuchi: meeting open requires the meeting id.\n",
 							);
 							process.exit(1);
 						}
@@ -590,7 +588,7 @@ cli
 					case "resume": {
 						if (!id) {
 							process.stderr.write(
-								"scratch-pad: meeting resume requires the meeting id.\n",
+								"aizuchi: meeting resume requires the meeting id.\n",
 							);
 							process.exit(1);
 						}
@@ -600,7 +598,7 @@ cli
 							else process.stdout.write(`Resumed: ${id}. Window opened.\n`);
 						} catch (e) {
 							if (e instanceof NotFoundError) {
-								process.stderr.write(`scratch-pad: meeting not found: ${id}\n`);
+								process.stderr.write(`aizuchi: meeting not found: ${id}\n`);
 								process.exit(1);
 							}
 							throw e;
@@ -610,7 +608,7 @@ cli
 					case "rm": {
 						if (!id) {
 							process.stderr.write(
-								"scratch-pad: meeting rm requires the meeting id.\n",
+								"aizuchi: meeting rm requires the meeting id.\n",
 							);
 							process.exit(1);
 						}
@@ -620,7 +618,7 @@ cli
 							else process.stdout.write(`Deleted: ${id}\n`);
 						} catch (e) {
 							if (e instanceof NotFoundError) {
-								process.stderr.write(`scratch-pad: meeting not found: ${id}\n`);
+								process.stderr.write(`aizuchi: meeting not found: ${id}\n`);
 								process.exit(1);
 							}
 							throw e;
@@ -630,13 +628,13 @@ cli
 					case "rename": {
 						if (!id) {
 							process.stderr.write(
-								"scratch-pad: meeting rename requires the meeting id.\n",
+								"aizuchi: meeting rename requires the meeting id.\n",
 							);
 							process.exit(1);
 						}
 						if (arg === undefined || arg === "") {
 							process.stderr.write(
-								"scratch-pad: meeting rename requires a non-empty name.\n",
+								"aizuchi: meeting rename requires a non-empty name.\n",
 							);
 							process.exit(1);
 						}
@@ -646,7 +644,7 @@ cli
 							else process.stdout.write(`Renamed: ${id} → "${arg}". Locked.\n`);
 						} catch (e) {
 							if (e instanceof NotFoundError) {
-								process.stderr.write(`scratch-pad: meeting not found: ${id}\n`);
+								process.stderr.write(`aizuchi: meeting not found: ${id}\n`);
 								process.exit(1);
 							}
 							throw e;
@@ -655,7 +653,7 @@ cli
 					}
 					default:
 						process.stderr.write(
-							`scratch-pad: unknown meeting subcommand '${subcommand}'. Try: start, stop, ls, open, resume, rm, rename.\n`,
+							`aizuchi: unknown meeting subcommand '${subcommand}'. Try: start, stop, ls, open, resume, rm, rename.\n`,
 						);
 						process.exit(2);
 				}
@@ -670,7 +668,7 @@ cli
 cli.command("status", "Show app status / IPC version").action(async (opts) => {
 	const flags = readFlags(opts);
 	try {
-		const client = await ScratchPadClient.create();
+		const client = await AizuchiClient.create();
 		const status = await client.status();
 		if (flags.json) emitJson(status);
 		else
