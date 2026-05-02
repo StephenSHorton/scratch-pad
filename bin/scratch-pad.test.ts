@@ -73,12 +73,36 @@ describe("scratch-pad CLI", () => {
 			"edit",
 			"rm",
 			"focus",
+			"pad",
 			"meeting",
 			"status",
 		];
 		for (const cmd of expectedCommands) {
 			expect(r.stdout).toContain(cmd);
 		}
+	});
+
+	it("ls --help mentions --include-hidden and --only-hidden", async () => {
+		const r = await runCli(["ls", "--help"]);
+		expect(r.exitCode).toBe(0);
+		expect(r.stdout).toContain("--include-hidden");
+		expect(r.stdout).toContain("--only-hidden");
+	});
+
+	it("top-level --help advertises the meeting subcommands", async () => {
+		const r = await runCli(["--help"]);
+		expect(r.exitCode).toBe(0);
+		// The meeting command's brief description enumerates the
+		// supported subcommands so they're visible from `--help`.
+		expect(r.stdout).toContain("resume");
+		expect(r.stdout).toContain("rename");
+	});
+
+	it("top-level --help advertises the pad visibility subcommands", async () => {
+		const r = await runCli(["--help"]);
+		expect(r.exitCode).toBe(0);
+		expect(r.stdout).toContain("hide");
+		expect(r.stdout).toContain("show-hidden");
 	});
 
 	it("prints a clean app-not-running message when discovery files are missing", async () => {
@@ -109,5 +133,94 @@ describe("scratch-pad CLI", () => {
 		const r = await runCli(["meeting", "stop"], { HOME: tmpHome });
 		expect(r.exitCode).toBe(1);
 		expect(r.stderr).toMatch(/meeting stop requires|app isn't running/);
+	});
+
+	// ---- pad subcommand group ------------------------------------------
+
+	it("`pad hide <id>` prints app-not-running when the app is down", async () => {
+		const r = await runCli(["pad", "hide", "abc"], { HOME: tmpHome });
+		expect(r.exitCode).toBe(1);
+		expect(r.stderr).toContain("app isn't running");
+		expect(r.stderr).not.toContain("at ");
+	});
+
+	it("`pad show <id>` prints app-not-running when the app is down", async () => {
+		const r = await runCli(["pad", "show", "abc"], { HOME: tmpHome });
+		expect(r.exitCode).toBe(1);
+		expect(r.stderr).toContain("app isn't running");
+	});
+
+	it("`pad show-hidden` prints app-not-running when the app is down", async () => {
+		const r = await runCli(["pad", "show-hidden"], { HOME: tmpHome });
+		expect(r.exitCode).toBe(1);
+		expect(r.stderr).toContain("app isn't running");
+	});
+
+	it("`pad hide` without an id errors out before discovery", async () => {
+		const r = await runCli(["pad", "hide"], { HOME: tmpHome });
+		expect(r.exitCode).toBe(1);
+		expect(r.stderr).toContain("pad hide requires the pad id");
+	});
+
+	it("`pad show` without an id errors out before discovery", async () => {
+		const r = await runCli(["pad", "show"], { HOME: tmpHome });
+		expect(r.exitCode).toBe(1);
+		expect(r.stderr).toContain("pad show requires the pad id");
+	});
+
+	it("unknown `pad` subcommand exits 2 with a useful message", async () => {
+		const r = await runCli(["pad", "wat"], { HOME: tmpHome });
+		expect(r.exitCode).toBe(2);
+		expect(r.stderr).toContain("unknown pad subcommand");
+	});
+
+	// ---- meeting extended commands ------------------------------------
+
+	it("`meeting resume <id>` prints app-not-running when the app is down", async () => {
+		const r = await runCli(["meeting", "resume", "m-1"], { HOME: tmpHome });
+		expect(r.exitCode).toBe(1);
+		expect(r.stderr).toContain("app isn't running");
+	});
+
+	it("`meeting rm <id>` prints app-not-running when the app is down", async () => {
+		const r = await runCli(["meeting", "rm", "m-1"], { HOME: tmpHome });
+		expect(r.exitCode).toBe(1);
+		expect(r.stderr).toContain("app isn't running");
+	});
+
+	it("`meeting rename <id> <name>` prints app-not-running when the app is down", async () => {
+		const r = await runCli(["meeting", "rename", "m-1", "New name"], {
+			HOME: tmpHome,
+		});
+		expect(r.exitCode).toBe(1);
+		expect(r.stderr).toContain("app isn't running");
+	});
+
+	it("`meeting resume` without an id errors out before discovery", async () => {
+		const r = await runCli(["meeting", "resume"], { HOME: tmpHome });
+		expect(r.exitCode).toBe(1);
+		expect(r.stderr).toContain("meeting resume requires the meeting id");
+	});
+
+	it("`meeting rm` without an id errors out before discovery", async () => {
+		const r = await runCli(["meeting", "rm"], { HOME: tmpHome });
+		expect(r.exitCode).toBe(1);
+		expect(r.stderr).toContain("meeting rm requires the meeting id");
+	});
+
+	it("`meeting rename` without an id errors out before discovery", async () => {
+		const r = await runCli(["meeting", "rename"], { HOME: tmpHome });
+		expect(r.exitCode).toBe(1);
+		expect(r.stderr).toContain("meeting rename requires the meeting id");
+	});
+
+	it("`meeting rename <id> ''` rejects empty names with a clear message", async () => {
+		const r = await runCli(["meeting", "rename", "m-1", ""], {
+			HOME: tmpHome,
+		});
+		expect(r.exitCode).toBe(1);
+		expect(r.stderr).toContain("meeting rename requires a non-empty name");
+		// Should fail before the discovery step.
+		expect(r.stderr).not.toContain("app isn't running");
 	});
 });

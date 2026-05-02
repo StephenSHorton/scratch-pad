@@ -31,6 +31,7 @@ import {
 	IpcClientError,
 	type MeetingMeta,
 	type Note,
+	NotFoundError,
 	ScratchPadClient,
 } from "../src/lib/cli-core";
 
@@ -268,15 +269,19 @@ cli.option("--debug", "Print full stack traces on error");
 
 cli
 	.command("ls", "List visible pads")
-	.option("--all", "Include hidden pads")
-	.option("--hidden", "Show only hidden pads")
+	.option("--all", "Include hidden pads (alias for --include-hidden)")
+	.option("--include-hidden", "Include hidden pads alongside visible ones")
+	.option("--hidden", "Show only hidden pads (alias for --only-hidden)")
+	.option("--only-hidden", "Show only hidden pads")
 	.action(async (opts) => {
 		const flags = readFlags(opts);
 		try {
 			const client = await ScratchPadClient.create();
-			const listOpts = opts.hidden
+			const onlyHidden = opts.hidden || opts.onlyHidden;
+			const includeHidden = opts.all || opts.includeHidden;
+			const listOpts = onlyHidden
 				? ({ only: "hidden" } as const)
-				: opts.all
+				: includeHidden
 					? ({ include: "hidden" } as const)
 					: {};
 			const pads = await client.listPads(listOpts);
@@ -397,68 +402,77 @@ cli
 		}
 	});
 
-// ---- meeting ----------------------------------------------------------
+// ---- pad (subcommand group) ------------------------------------------
 
 cli
-	.command("meeting <subcommand> [id]", "Manage meetings (start|stop|ls|open)")
-	.option("--mode <mode>", "live or demo", { default: "live" })
-	.action(async (subcommand: string, id: string | undefined, opts) => {
+	.command(
+		"pad <subcommand> [arg]",
+		"Pad visibility commands (hide|show|show-hidden)",
+	)
+	.action(async (subcommand: string, arg: string | undefined, opts) => {
 		const flags = readFlags(opts);
+		// Up-front validation. Runs before discovery so unknown
+		// subcommands and missing args surface useful messages even when
+		// the app isn't running.
+		const known = new Set(["hide", "show", "show-hidden"]);
+		if (!known.has(subcommand)) {
+			process.stderr.write(
+				`scratch-pad: unknown pad subcommand '${subcommand}'. Try: hide, show, show-hidden.\n`,
+			);
+			process.exit(2);
+		}
+		const requiresArg: Record<string, true> = { hide: true, show: true };
+		if (requiresArg[subcommand] && !arg) {
+			process.stderr.write(
+				`scratch-pad: pad ${subcommand} requires the pad id.\n`,
+			);
+			process.exit(1);
+		}
 		try {
 			const client = await ScratchPadClient.create();
 			switch (subcommand) {
-				case "ls": {
-					const meetings = await client.listMeetings();
-					if (flags.json) emitJson(meetings);
-					else process.stdout.write(`${renderMeetingList(meetings)}\n`);
+				case "hide": {
+					try {
+						const note = await client.hidePad(arg as string);
+						if (flags.json) emitJson(note);
+						else process.stdout.write(`Hidden: ${arg}\n`);
+					} catch (e) {
+						if (e instanceof NotFoundError) {
+							process.stderr.write(`scratch-pad: pad not found: ${arg}\n`);
+							process.exit(1);
+						}
+						throw e;
+					}
 					return;
 				}
-				case "start": {
-					const mode = String(opts.mode);
-					if (mode !== "demo" && mode !== "live") {
-						throw new IpcClientError(
-							"validation_error",
-							`--mode must be 'demo' or 'live' (got ${JSON.stringify(mode)}).`,
-						);
+				case "show": {
+					try {
+						const note = await client.showPad(arg as string);
+						if (flags.json) emitJson(note);
+						else process.stdout.write(`Restored: ${arg}\n`);
+					} catch (e) {
+						if (e instanceof NotFoundError) {
+							process.stderr.write(`scratch-pad: pad not found: ${arg}\n`);
+							process.exit(1);
+						}
+						throw e;
 					}
-					const result = await client.startMeeting(mode);
+					return;
+				}
+				case "show-hidden": {
+					const result = await client.showAllHidden();
 					if (flags.json) emitJson(result);
+					else if (result.restored === 0)
+						process.stdout.write("No hidden pads.\n");
 					else
 						process.stdout.write(
-							`Started ${mode} meeting ${result.id}. Window opened.\n`,
+							`Restored ${result.restored} hidden pad(s).\n`,
 						);
-					return;
-				}
-				case "stop": {
-					if (!id) {
-						process.stderr.write(
-							"scratch-pad: meeting stop requires the meeting id. Use `scratch-pad meeting ls` to find it.\n",
-						);
-						process.exit(1);
-					}
-					const meta = await client.stopMeeting(id);
-					if (flags.json) emitJson(meta);
-					else
-						process.stdout.write(
-							`Stopped ${id}. ended=${isoOrEmpty(meta.endedAt)}.\n`,
-						);
-					return;
-				}
-				case "open": {
-					if (!id) {
-						process.stderr.write(
-							"scratch-pad: meeting open requires the meeting id.\n",
-						);
-						process.exit(1);
-					}
-					await client.openMeeting(id);
-					if (flags.json) emitJson({ ok: true, id });
-					else process.stdout.write(`Opened ${id}.\n`);
 					return;
 				}
 				default:
 					process.stderr.write(
-						`scratch-pad: unknown meeting subcommand '${subcommand}'. Try: start, stop, ls, open.\n`,
+						`scratch-pad: unknown pad subcommand '${subcommand}'. Try: hide, show, show-hidden.\n`,
 					);
 					process.exit(2);
 			}
@@ -466,6 +480,190 @@ cli
 			fatal(err, flags);
 		}
 	});
+
+// ---- meeting ----------------------------------------------------------
+
+cli
+	.command(
+		"meeting <subcommand> [id] [arg]",
+		"Manage meetings (start|stop|ls|open|resume|rm|rename)",
+	)
+	.option("--mode <mode>", "live or demo", { default: "live" })
+	.option("--force", "Reserved for symmetry with `pad rm` (currently no-op)")
+	.action(
+		async (
+			subcommand: string,
+			id: string | undefined,
+			arg: string | undefined,
+			opts,
+		) => {
+			const flags = readFlags(opts);
+			// Up-front validation. Runs before discovery so unknown
+			// subcommands and bad args surface useful messages even when
+			// the app isn't running.
+			const known = new Set([
+				"ls",
+				"start",
+				"stop",
+				"open",
+				"resume",
+				"rm",
+				"rename",
+			]);
+			if (!known.has(subcommand)) {
+				process.stderr.write(
+					`scratch-pad: unknown meeting subcommand '${subcommand}'. Try: start, stop, ls, open, resume, rm, rename.\n`,
+				);
+				process.exit(2);
+			}
+			const requiresId: Record<string, true> = {
+				stop: true,
+				open: true,
+				resume: true,
+				rm: true,
+				rename: true,
+			};
+			if (requiresId[subcommand] && !id) {
+				process.stderr.write(
+					`scratch-pad: meeting ${subcommand} requires the meeting id.\n`,
+				);
+				process.exit(1);
+			}
+			if (subcommand === "rename" && (arg === undefined || arg === "")) {
+				process.stderr.write(
+					"scratch-pad: meeting rename requires a non-empty name.\n",
+				);
+				process.exit(1);
+			}
+			try {
+				const client = await ScratchPadClient.create();
+				switch (subcommand) {
+					case "ls": {
+						const meetings = await client.listMeetings();
+						if (flags.json) emitJson(meetings);
+						else process.stdout.write(`${renderMeetingList(meetings)}\n`);
+						return;
+					}
+					case "start": {
+						const mode = String(opts.mode);
+						if (mode !== "demo" && mode !== "live") {
+							throw new IpcClientError(
+								"validation_error",
+								`--mode must be 'demo' or 'live' (got ${JSON.stringify(mode)}).`,
+							);
+						}
+						const result = await client.startMeeting(mode);
+						if (flags.json) emitJson(result);
+						else
+							process.stdout.write(
+								`Started ${mode} meeting ${result.id}. Window opened.\n`,
+							);
+						return;
+					}
+					case "stop": {
+						if (!id) {
+							process.stderr.write(
+								"scratch-pad: meeting stop requires the meeting id. Use `scratch-pad meeting ls` to find it.\n",
+							);
+							process.exit(1);
+						}
+						const meta = await client.stopMeeting(id);
+						if (flags.json) emitJson(meta);
+						else
+							process.stdout.write(
+								`Stopped ${id}. ended=${isoOrEmpty(meta.endedAt)}.\n`,
+							);
+						return;
+					}
+					case "open": {
+						if (!id) {
+							process.stderr.write(
+								"scratch-pad: meeting open requires the meeting id.\n",
+							);
+							process.exit(1);
+						}
+						await client.openMeeting(id);
+						if (flags.json) emitJson({ ok: true, id });
+						else process.stdout.write(`Opened ${id}.\n`);
+						return;
+					}
+					case "resume": {
+						if (!id) {
+							process.stderr.write(
+								"scratch-pad: meeting resume requires the meeting id.\n",
+							);
+							process.exit(1);
+						}
+						try {
+							const result = await client.resumeMeeting(id);
+							if (flags.json) emitJson(result);
+							else process.stdout.write(`Resumed: ${id}. Window opened.\n`);
+						} catch (e) {
+							if (e instanceof NotFoundError) {
+								process.stderr.write(`scratch-pad: meeting not found: ${id}\n`);
+								process.exit(1);
+							}
+							throw e;
+						}
+						return;
+					}
+					case "rm": {
+						if (!id) {
+							process.stderr.write(
+								"scratch-pad: meeting rm requires the meeting id.\n",
+							);
+							process.exit(1);
+						}
+						try {
+							await client.deleteMeeting(id);
+							if (flags.json) emitJson({ ok: true, id });
+							else process.stdout.write(`Deleted: ${id}\n`);
+						} catch (e) {
+							if (e instanceof NotFoundError) {
+								process.stderr.write(`scratch-pad: meeting not found: ${id}\n`);
+								process.exit(1);
+							}
+							throw e;
+						}
+						return;
+					}
+					case "rename": {
+						if (!id) {
+							process.stderr.write(
+								"scratch-pad: meeting rename requires the meeting id.\n",
+							);
+							process.exit(1);
+						}
+						if (arg === undefined || arg === "") {
+							process.stderr.write(
+								"scratch-pad: meeting rename requires a non-empty name.\n",
+							);
+							process.exit(1);
+						}
+						try {
+							const meta = await client.renameMeeting(id, arg, true);
+							if (flags.json) emitJson(meta);
+							else process.stdout.write(`Renamed: ${id} → "${arg}". Locked.\n`);
+						} catch (e) {
+							if (e instanceof NotFoundError) {
+								process.stderr.write(`scratch-pad: meeting not found: ${id}\n`);
+								process.exit(1);
+							}
+							throw e;
+						}
+						return;
+					}
+					default:
+						process.stderr.write(
+							`scratch-pad: unknown meeting subcommand '${subcommand}'. Try: start, stop, ls, open, resume, rm, rename.\n`,
+						);
+						process.exit(2);
+				}
+			} catch (err) {
+				fatal(err, flags);
+			}
+		},
+	);
 
 // ---- status -----------------------------------------------------------
 
