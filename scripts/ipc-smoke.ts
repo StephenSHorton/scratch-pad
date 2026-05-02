@@ -3,7 +3,7 @@
  * AIZ-20 — IPC smoke harness.
  *
  * Walks every endpoint in the v1 IPC catalog and asserts the basic
- * shapes. Reads the bound port and bearer token from `~/.scratch-pad/`.
+ * shapes. Reads the bound port and bearer token from `~/.aizuchi/`.
  *
  * EXPECTS `bun tauri dev` (or a packaged build) to already be running.
  *
@@ -25,7 +25,7 @@ import path from "node:path";
 const args = new Set(process.argv.slice(2));
 const includeMeeting = args.has("--meeting");
 
-const root = path.join(os.homedir(), ".scratch-pad");
+const root = path.join(os.homedir(), ".aizuchi");
 const tokenFile = path.join(root, "cli-token");
 const portFile = path.join(root, "cli.port");
 const metaFile = path.join(root, "cli.json");

@@ -1,7 +1,6 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-	readonly VITE_AIZUCHI?: string;
 	readonly VITE_AIZUCHI_PROVIDER?: string;
 	readonly VITE_AIZUCHI_OLLAMA_MODEL?: string;
 	readonly VITE_OLLAMA_BASE_URL?: string;

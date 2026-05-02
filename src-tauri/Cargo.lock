@@ -18,6 +18,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "aizuchi"
+version = "0.1.0"
+dependencies = [
+ "block2",
+ "chrono",
+ "cpal",
+ "dirs 5.0.1",
+ "getrandom 0.2.17",
+ "hex",
+ "hostname",
+ "hound",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "local-ip-address",
+ "mdns-sd",
+ "notify",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "serde",
+ "serde_json",
+ "subtle",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-autostart",
+ "tauri-plugin-opener",
+ "tauri-plugin-updater",
+ "tokio",
+ "uuid",
+ "whisper-rs",
+]
+
+[[package]]
 name = "alloc-no-stdlib"
 version = "2.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3893,39 +3926,6 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
-
-[[package]]
-name = "scratch-pad"
-version = "0.1.0"
-dependencies = [
- "block2",
- "chrono",
- "cpal",
- "dirs 5.0.1",
- "getrandom 0.2.17",
- "hex",
- "hostname",
- "hound",
- "http-body-util",
- "hyper",
- "hyper-util",
- "local-ip-address",
- "mdns-sd",
- "notify",
- "objc2-app-kit",
- "objc2-foundation",
- "serde",
- "serde_json",
- "subtle",
- "tauri",
- "tauri-build",
- "tauri-plugin-autostart",
- "tauri-plugin-opener",
- "tauri-plugin-updater",
- "tokio",
- "uuid",
- "whisper-rs",
-]
 
 [[package]]
 name = "security-framework"

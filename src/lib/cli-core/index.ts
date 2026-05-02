@@ -1,13 +1,13 @@
 /**
- * Public barrel for the Scratch Pad IPC core client.
+ * Public barrel for the Aizuchi IPC core client.
  *
  * Consumers (the base CLI in `bin/`, the extended CLI in AIZ-22, the
  * MCP refactor in AIZ-23, and any future TS tooling) should import
  * from `@/lib/cli-core` only — never reach into individual modules.
  */
 
-export type { ScratchPadClientOptions } from "./client";
-export { ScratchPadClient } from "./client";
+export type { AizuchiClientOptions } from "./client";
+export { AizuchiClient } from "./client";
 export { defaultBaseDir, loadIpcConfig } from "./discovery";
 export {
 	AppNotRunningError,
@@ -38,10 +38,10 @@ export type {
 	StartMeetingResponse,
 } from "./types";
 
-/** Convenience factory — equivalent to `ScratchPadClient.create(opts)`. */
-import { ScratchPadClient, type ScratchPadClientOptions } from "./client";
+/** Convenience factory — equivalent to `AizuchiClient.create(opts)`. */
+import { AizuchiClient, type AizuchiClientOptions } from "./client";
 export function createClient(
-	opts?: ScratchPadClientOptions,
-): Promise<ScratchPadClient> {
-	return ScratchPadClient.create(opts);
+	opts?: AizuchiClientOptions,
+): Promise<AizuchiClient> {
+	return AizuchiClient.create(opts);
 }

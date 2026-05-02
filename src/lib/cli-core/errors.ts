@@ -1,5 +1,5 @@
 /**
- * Typed error classes for the Scratch Pad IPC client.
+ * Typed error classes for the Aizuchi IPC client.
  *
  * The server-side error codes are frozen by the v1 IPC contract — see
  * `src-tauri/src/cli_server/error.rs`. These classes are the canonical

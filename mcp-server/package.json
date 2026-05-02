@@ -1,14 +1,14 @@
 {
-  "name": "scratch-pad-mcp",
+  "name": "aizuchi-mcp",
   "version": "1.0.0",
-  "description": "MCP server for Scratch Pad desktop sticky notes",
+  "description": "MCP server for Aizuchi desktop app",
   "type": "module",
   "bin": {
-    "scratch-pad-mcp": "./dist/index.js"
+    "aizuchi-mcp": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc",
-    "build:binary": "bun build --compile --minify src/index.ts --outfile ../src-tauri/binaries/scratch-pad-mcp",
+    "build:binary": "bun build --compile --minify src/index.ts --outfile ../src-tauri/binaries/aizuchi-mcp",
     "dev": "tsx src/index.ts"
   },
   "dependencies": {

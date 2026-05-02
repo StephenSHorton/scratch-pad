@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 use tokio::sync::mpsc;
 
-const SERVICE_TYPE: &str = "_scratchpad._tcp.local.";
+const SERVICE_TYPE: &str = "_aizuchi._tcp.local.";
 
 /// Events emitted by the discovery layer to the transport layer.
 #[derive(Debug, Clone)]
@@ -52,7 +52,7 @@ pub fn start_discovery(
 		.map_err(|e| format!("Failed to create mDNS daemon: {e}"))?;
 
 	// Register our service
-	let instance_name = format!("scratch-pad-{}", &node_id[..8]);
+	let instance_name = format!("aizuchi-{}", &node_id[..8]);
 	let host = format!("{}.local.", hostname::get()
 		.map(|h| h.to_string_lossy().to_string())
 		.unwrap_or_else(|_| "localhost".to_string()));

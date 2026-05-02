@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * Scratch Pad / Aizuchi MCP server.
+ * Aizuchi MCP server.
  *
  * Phase 4 of AIZ-13 (AIZ-23): the CRUD path now goes through the shared
- * `ScratchPadClient` from `src/lib/cli-core/`. Every "create / read /
+ * `AizuchiClient` from `src/lib/cli-core/`. Every "create / read /
  * update / delete" tool is a thin wrapper over the IPC server running
  * inside the Tauri app — there is no more direct `notes.json` access on
  * the CRUD path.
@@ -11,7 +11,7 @@
  * Behaviour change vs. pre-AIZ-23: the MCP server now requires the
  * Tauri app to be running. CRUD calls without the app surface as a
  * friendly "app isn't running" message instead of silently writing to
- * ~/.scratch-pad/notes.json.
+ * ~/.aizuchi/notes.json.
  *
  * What still touches the filesystem directly (residual / explicitly
  * out of scope for this PR — folded in by a follow-up):
@@ -24,7 +24,7 @@
  *   - `room_host`, `room_join`,
  *     `peer_disconnect`             .host-room / .join-room / etc.
  *   - `log_open`, `log_close`       .show-logs / .close-logs signals
- *   - `log_tail`, `log_search`      reads scratch-pad.log
+ *   - `log_tail`, `log_search`      reads aizuchi.log
  *   - `note_highlight`,
  *     `note_unhighlight`            highlights.json
  *
@@ -35,14 +35,14 @@
  * ## Cross-package import note
  *
  * `mcp-server/` is a sibling Bun package — its `package.json` has no
- * dependency on the parent repo. We pull in `ScratchPadClient` via a
+ * dependency on the parent repo. We pull in `AizuchiClient` via a
  * relative path that crosses the package boundary
  * (`../../src/lib/cli-core`). At runtime this works because
  * `bun build --compile --minify` (the `build:binary` script) bundles
  * every reachable module into the standalone sidecar binary, so the
  * cross-package path is purely a build-time concern. Future cleanup:
  * convert `cli-core` into a proper workspace package
- * (`@scratch-pad/cli-core`).
+ * (`@aizuchi/cli-core`).
  */
 
 import fs from "node:fs";
@@ -60,7 +60,7 @@ import {
 	type MeetingSnapshot,
 	type Note,
 	NotFoundError,
-	ScratchPadClient,
+	AizuchiClient,
 } from "../../src/lib/cli-core";
 
 // ---------------------------------------------------------------------------
@@ -95,7 +95,7 @@ type HighlightValue = string | { type: "blocks"; blocks: number[] };
 // ---------------------------------------------------------------------------
 
 function notesDir(): string {
-	return path.join(os.homedir(), ".scratch-pad");
+	return path.join(os.homedir(), ".aizuchi");
 }
 
 function ensureNotesDir(): void {
@@ -159,7 +159,7 @@ function log(msg: string): void {
 	const timestamp = new Date().toISOString().replace("T", " ").replace("Z", "");
 	const line = `[${timestamp}] [mcp] ${msg}\n`;
 	try {
-		fs.appendFileSync(path.join(notesDir(), "scratch-pad.log"), line);
+		fs.appendFileSync(path.join(notesDir(), "aizuchi.log"), line);
 	} catch {}
 }
 
@@ -172,11 +172,11 @@ function log(msg: string): void {
 // reconnect from Claude Code by restarting the MCP session.
 // ---------------------------------------------------------------------------
 
-let cachedClient: ScratchPadClient | null = null;
+let cachedClient: AizuchiClient | null = null;
 
-async function getClient(): Promise<ScratchPadClient> {
+async function getClient(): Promise<AizuchiClient> {
 	if (cachedClient) return cachedClient;
-	cachedClient = await ScratchPadClient.create();
+	cachedClient = await AizuchiClient.create();
 	return cachedClient;
 }
 
@@ -191,7 +191,7 @@ interface ToolError {
  * propagates so the SDK can surface it as a transport error.
  */
 async function withClient<T extends { content: { type: "text"; text: string }[] }>(
-	fn: (client: ScratchPadClient) => Promise<T>,
+	fn: (client: AizuchiClient) => Promise<T>,
 ): Promise<T | ToolError> {
 	try {
 		const client = await getClient();
@@ -205,7 +205,7 @@ async function withClient<T extends { content: { type: "text"; text: string }[] 
 					{
 						type: "text" as const,
 						text:
-							"Scratch Pad app isn't running. Start it (open -a 'Scratch Pad' " +
+							"Aizuchi app isn't running. Start it (open -a 'Aizuchi' " +
 							"or `bun tauri dev`) and retry.",
 					},
 				],
@@ -244,7 +244,7 @@ async function withClient<T extends { content: { type: "text"; text: string }[] 
 // ---------------------------------------------------------------------------
 
 const server = new McpServer({
-	name: "scratch-pad",
+	name: "aizuchi",
 	version: "1.0.0",
 });
 
@@ -631,7 +631,7 @@ server.tool(
 				content: [
 					{
 						type: "text" as const,
-						text: "No peers discovered on the network. Make sure other Scratch Pad instances are running on the same LAN.",
+						text: "No peers discovered on the network. Make sure other Aizuchi instances are running on the same LAN.",
 					},
 				],
 			};
@@ -760,7 +760,7 @@ server.tool(
 			content: [
 				{
 					type: "text" as const,
-					text: "Failed to host room — Scratch Pad app may not be running.",
+					text: "Failed to host room — Aizuchi app may not be running.",
 				},
 			],
 			isError: true,
@@ -770,7 +770,7 @@ server.tool(
 
 server.tool(
 	"room_join",
-	"Join a multiplayer room using a room code from a teammate. Connects to their Scratch Pad instance for real-time note sharing.",
+	"Join a multiplayer room using a room code from a teammate. Connects to their Aizuchi instance for real-time note sharing.",
 	{
 		code: z.string().describe("The room code from the host (e.g., XXXX-XXXX-XX)"),
 	},
@@ -818,7 +818,7 @@ server.tool(
 			content: [
 				{
 					type: "text" as const,
-					text: "Join timed out — check that the host is running Scratch Pad and the code is correct.",
+					text: "Join timed out — check that the host is running Aizuchi and the code is correct.",
 				},
 			],
 			isError: true,
@@ -890,7 +890,7 @@ server.tool(
 );
 
 function readLogFile(): string {
-	const file = path.join(notesDir(), "scratch-pad.log");
+	const file = path.join(notesDir(), "aizuchi.log");
 	if (!fs.existsSync(file)) return "";
 	try {
 		return fs.readFileSync(file, "utf-8");
@@ -901,7 +901,7 @@ function readLogFile(): string {
 
 server.tool(
 	"log_tail",
-	"Read the most recent log entries from Scratch Pad. Useful for debugging network, MCP, and app events.",
+	"Read the most recent log entries from Aizuchi. Useful for debugging network, MCP, and app events.",
 	{
 		lines: z
 			.number()
@@ -934,7 +934,7 @@ server.tool(
 
 server.tool(
 	"log_search",
-	"Search Scratch Pad logs by keyword, time range, or category. Returns matching entries with context.",
+	"Search Aizuchi logs by keyword, time range, or category. Returns matching entries with context.",
 	{
 		query: z.string().describe("Search term to find in log entries"),
 		category: z

@@ -1,5 +1,5 @@
 /**
- * Smoke tests for the Scratch Pad MCP server.
+ * Smoke tests for the Aizuchi MCP server.
  *
  * Spawns the dev entry point as a subprocess, drives the MCP stdio
  * protocol by hand (initialize → tools/list), and verifies every tool
@@ -118,7 +118,7 @@ afterAll(async () => {
 	}
 });
 
-describe("scratch-pad MCP server", () => {
+describe("aizuchi MCP server", () => {
 	it("registers every expected tool", async () => {
 		const tools = await listTools();
 		const names = tools.map((t) => t.name).sort();
