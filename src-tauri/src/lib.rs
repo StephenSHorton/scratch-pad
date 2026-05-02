@@ -1,4 +1,5 @@
 mod audio;
+mod cli_server;
 mod meetings;
 mod network;
 
@@ -89,7 +90,7 @@ pub struct LiveAudioState {
 // Helper functions
 // ---------------------------------------------------------------------------
 
-fn notes_dir() -> PathBuf {
+pub(crate) fn notes_dir() -> PathBuf {
     let home = dirs::home_dir().expect("could not resolve home directory");
     home.join(".scratch-pad")
 }
@@ -124,7 +125,7 @@ fn notes_file() -> PathBuf {
     notes_dir().join("notes.json")
 }
 
-fn read_notes() -> Vec<Note> {
+pub(crate) fn read_notes() -> Vec<Note> {
     let path = notes_file();
     if !path.exists() {
         return vec![];
@@ -153,7 +154,7 @@ fn write_settings(settings: &Settings) {
     fs::write(settings_file(), json).ok();
 }
 
-fn write_notes(notes: &[Note]) {
+pub(crate) fn write_notes(notes: &[Note]) {
     let dir = notes_dir();
     fs::create_dir_all(&dir).ok();
     let json = serde_json::to_string_pretty(notes).unwrap_or_default();
@@ -179,7 +180,7 @@ fn create_blank_note() {
     write_notes(&notes);
 }
 
-fn create_note_with_body(title: Option<String>, body: String, color: &str) {
+pub(crate) fn create_note_with_body(title: Option<String>, body: String, color: &str) {
     log("Creating note with body");
     let note = Note {
         id: uuid::Uuid::new_v4().to_string(),
@@ -265,7 +266,19 @@ fn open_lobby_window(app: &AppHandle) {
         .ok();
 }
 
-fn open_meeting_window(app: &AppHandle, meeting_id: Option<&str>) {
+pub(crate) fn open_meeting_window(app: &AppHandle, meeting_id: Option<&str>) {
+    open_meeting_window_with_query(app, meeting_id, None);
+}
+
+/// Open the meeting graph + outline windows. If `query` is set, it's
+/// appended to the meeting URL (e.g. `?autostart=live`) so the React
+/// route can react to it via `window.location.search`. Used by the IPC
+/// `POST /v1/meetings` handler to launch live/demo capture.
+pub(crate) fn open_meeting_window_with_query(
+    app: &AppHandle,
+    meeting_id: Option<&str>,
+    query: Option<&str>,
+) {
     let id = meeting_id.unwrap_or("test");
     let graph_label = format!("meeting-{id}");
     let outline_label = format!("meeting-outline-{id}");
@@ -303,16 +316,16 @@ fn open_meeting_window(app: &AppHandle, meeting_id: Option<&str>) {
     if let Some(window) = app.get_webview_window(&graph_label) {
         window.set_focus().ok();
     } else {
-        WebviewWindowBuilder::new(
-            app,
-            &graph_label,
-            WebviewUrl::App(format!("meeting/{id}").into()),
-        )
-        .title("Aizuchi — meeting prototype")
-        .inner_size(graph_w, total_h)
-        .position(x_graph, y)
-        .build()
-        .ok();
+        let url = match query {
+            Some(q) if !q.is_empty() => format!("meeting/{id}?{q}"),
+            _ => format!("meeting/{id}"),
+        };
+        WebviewWindowBuilder::new(app, &graph_label, WebviewUrl::App(url.into()))
+            .title("Aizuchi — meeting prototype")
+            .inner_size(graph_w, total_h)
+            .position(x_graph, y)
+            .build()
+            .ok();
     }
 
     if let Some(window) = app.get_webview_window(&outline_label) {
@@ -362,38 +375,102 @@ fn get_note(id: String, state: tauri::State<'_, NotesState>) -> Option<Note> {
 
 #[tauri::command]
 fn dismiss_note(id: String, app: AppHandle, state: tauri::State<'_, NotesState>) {
-    // Remove from state
-    if let Ok(mut notes) = state.notes.lock() {
-        notes.retain(|n| n.id != id);
-        write_notes(&notes);
-    }
+    dismiss_note_inner(&id, &app, &state);
+}
 
-    // Close the window
-    if let Some(window) = app.get_webview_window(&id) {
+/// Hard-delete a note: drop it from state + disk, close its window.
+/// Returns true if a note was found and removed.
+pub(crate) fn dismiss_note_inner(id: &str, app: &AppHandle, state: &NotesState) -> bool {
+    let removed = if let Ok(mut notes) = state.notes.lock() {
+        let before = notes.len();
+        notes.retain(|n| n.id != id);
+        let removed = notes.len() != before;
+        if removed {
+            write_notes(&notes);
+        }
+        removed
+    } else {
+        false
+    };
+
+    if let Some(window) = app.get_webview_window(id) {
         window.close().ok();
     }
+    removed
 }
 
 // Soft-delete: flag the note as hidden and close its window. The note
 // stays in notes.json so it can be brought back via the palette.
 #[tauri::command]
 fn hide_note(id: String, app: AppHandle, state: tauri::State<'_, NotesState>) {
-    if let Ok(mut notes) = state.notes.lock() {
+    let _ = hide_note_inner(&id, &app, &state);
+}
+
+/// Mark the note as hidden (`hidden=true`, `hiddenAt=now`), persist to
+/// disk, close its window. Returns the updated note if it existed.
+pub(crate) fn hide_note_inner(
+    id: &str,
+    app: &AppHandle,
+    state: &NotesState,
+) -> Option<Note> {
+    let updated = if let Ok(mut notes) = state.notes.lock() {
         if let Some(note) = notes.iter_mut().find(|n| n.id == id) {
             note.hidden = true;
             note.hidden_at = Some(Utc::now().to_rfc3339());
+            let cloned = note.clone();
             write_notes(&notes);
             log(&format!("hide_note: {id} hidden"));
+            Some(cloned)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    if updated.is_some() {
+        if let Some(window) = app.get_webview_window(id) {
+            window.close().ok();
         }
     }
-    if let Some(window) = app.get_webview_window(&id) {
-        window.close().ok();
+    updated
+}
+
+/// Reverse of `hide_note_inner`: clear the `hidden` flag on a single
+/// note, write to disk, and trigger `sync_windows` so the window
+/// re-opens. Returns the updated note if it existed and was hidden.
+pub(crate) fn show_note_inner(
+    id: &str,
+    app: &AppHandle,
+    state: &NotesState,
+) -> Option<Note> {
+    let updated = if let Ok(mut notes) = state.notes.lock() {
+        if let Some(note) = notes.iter_mut().find(|n| n.id == id) {
+            if !note.hidden {
+                return Some(note.clone());
+            }
+            note.hidden = false;
+            note.hidden_at = None;
+            let cloned = note.clone();
+            write_notes(&notes);
+            log(&format!("show_note: {id} restored"));
+            Some(cloned)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    if updated.is_some() {
+        sync_windows(app, state);
     }
+    updated
 }
 
 // Reveal every hidden pad. First-cut blanket action — clears the flag on all
 // notes and triggers a sync so windows reopen.
-fn restore_hidden_pads(app: &AppHandle, state: &NotesState) -> usize {
+pub(crate) fn restore_hidden_pads(app: &AppHandle, state: &NotesState) -> usize {
     let mut notes = read_notes();
     let mut count = 0;
     for note in notes.iter_mut() {
@@ -1123,7 +1200,7 @@ fn create_note_window(app: &AppHandle, note: &Note, _index: usize) {
     }
 }
 
-fn sync_windows(app: &AppHandle, state: &NotesState) {
+pub(crate) fn sync_windows(app: &AppHandle, state: &NotesState) {
     let mut notes = read_notes();
     let now = Utc::now();
 
@@ -1813,6 +1890,19 @@ pub fn run() {
                 network_handle.manage(network);
             });
 
+            // Start localhost IPC HTTP server (AIZ-20). Bound to
+            // 127.0.0.1 with a per-install bearer token; auto-discovered
+            // by the CLI / MCP via files in `~/.scratch-pad/`.
+            let ipc_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                match cli_server::start_ipc_server(ipc_handle.clone()).await {
+                    Ok(server) => {
+                        ipc_handle.manage(server);
+                    }
+                    Err(e) => log(&format!("[ipc] failed to start: {e}")),
+                }
+            });
+
             // macOS: create a blank note when app is re-focused with no notes
             #[cfg(target_os = "macos")]
             {
@@ -1875,6 +1965,13 @@ pub fn run() {
     app.run(|_app_handle, event| {
         match event {
             RunEvent::ExitRequested { api, .. } => {
+                // Tear down the IPC server cleanly so in-flight requests
+                // get a chance to drain and the discovery files don't
+                // outlive the process.
+                if let Some(ipc) = _app_handle.try_state::<cli_server::IpcServerHandle>() {
+                    ipc.shutdown.notify_waiters();
+                }
+                cli_server::discovery::remove_discovery_files(&notes_dir());
                 api.prevent_exit();
             }
             #[cfg(target_os = "macos")]

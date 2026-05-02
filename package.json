@@ -8,7 +8,8 @@
 		"lint": "biome check",
 		"preview": "vite preview",
 		"tauri": "tauri",
-		"build:mcp": "cd mcp-server && bun run build:binary && TRIPLE=$(rustc -vV | grep host | cut -d' ' -f2) && mv ../src-tauri/binaries/scratch-pad-mcp ../src-tauri/binaries/scratch-pad-mcp-${TRIPLE}"
+		"build:mcp": "cd mcp-server && bun run build:binary && TRIPLE=$(rustc -vV | grep host | cut -d' ' -f2) && mv ../src-tauri/binaries/scratch-pad-mcp ../src-tauri/binaries/scratch-pad-mcp-${TRIPLE}",
+		"ipc:smoke": "bun run scripts/ipc-smoke.ts"
 	},
 	"dependencies": {
 		"@ai-sdk/anthropic": "^3.0.71",
