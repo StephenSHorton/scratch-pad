@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
 	type Dispatch,
@@ -134,6 +135,14 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 	const modeRef = useRef<Mode>("idle");
 	const meetingIdRef = useRef<string>(meetingId);
 	const startedAtRef = useRef<number>(Date.now());
+	// Holds the latest saveCurrentMeeting impl so the audio-phase listener
+	// (registered once) can always call the current version.
+	const saveCurrentMeetingRef = useRef<
+		((savedMode: "demo" | "live") => Promise<string | null>) | null
+	>(null);
+	// Guards against double-saving when both stopLive and the audio-phase
+	// listener fire for the same session. Reset on each new session start.
+	const sessionSavedRef = useRef(false);
 
 	useEffect(() => {
 		return () => {
@@ -251,6 +260,43 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 			return null;
 		}
 	};
+
+	const saveOnceForLive = async () => {
+		if (sessionSavedRef.current) return;
+		sessionSavedRef.current = true;
+		await saveCurrentMeeting("live");
+	};
+
+	saveCurrentMeetingRef.current = saveCurrentMeeting;
+
+	// Recording-session window has its own Stop button that calls
+	// stop_live_capture directly, bypassing the meeting hook. Listen for
+	// the resulting `audio-phase` "done" event so we still save the
+	// snapshot when the user stops there.
+	useEffect(() => {
+		const unlistenPromise = listen<{ phase: string; label: string }>(
+			"audio-phase",
+			(event) => {
+				if (event.payload.phase !== "done") return;
+				if (modeRef.current !== "live") return;
+				if (sessionSavedRef.current) return;
+				sessionSavedRef.current = true;
+				signalRef.current.cancelled = true;
+				runningRef.current = false;
+				const save = saveCurrentMeetingRef.current;
+				const finish = () => {
+					setMode("idle");
+					modeRef.current = "idle";
+					setStatus("done");
+				};
+				if (save) save("live").finally(finish);
+				else finish();
+			},
+		);
+		return () => {
+			unlistenPromise.then((fn) => fn()).catch(() => {});
+		};
+	}, []);
 
 	const hydrateFromSnapshot = (snap: MeetingSnapshot) => {
 		meetingIdRef.current = snap.id;
@@ -388,6 +434,7 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		const startGraph = resetSessionState("demo");
 		meetingIdRef.current = newMeetingId();
 		startedAtRef.current = Date.now();
+		sessionSavedRef.current = false;
 		const source = feedTranscriptBatches(standupTranscript, {
 			sizeThresholdWords: SIZE_THRESHOLD_WORDS,
 			timeThresholdMs: TIME_THRESHOLD_MS,
@@ -404,6 +451,7 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		const startGraph = resetSessionState("live");
 		meetingIdRef.current = newMeetingId();
 		startedAtRef.current = Date.now();
+		sessionSavedRef.current = false;
 
 		try {
 			await invoke("start_live_capture");
@@ -448,7 +496,7 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		signalRef.current.cancelled = true;
 		runningRef.current = false;
 		await invoke("stop_live_capture").catch(() => {});
-		await saveCurrentMeeting("live");
+		await saveOnceForLive();
 		setMode("idle");
 		modeRef.current = "idle";
 		setStatus("done");
