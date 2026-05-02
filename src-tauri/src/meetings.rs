@@ -16,6 +16,15 @@ pub struct MeetingMeta {
     pub edge_count: usize,
     pub thought_count: usize,
     pub transcript_duration_ms: i64,
+    /// AIZ-16: AI-generated or user-overridden meeting name.
+    /// `None` for legacy snapshots written before naming shipped — the
+    /// browser falls back to the id in that case.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// AIZ-16: True when the user typed the name in the status panel.
+    /// Once true, the AI naming loop stops re-proposing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name_locked_by_user: Option<bool>,
 }
 
 const SUPPORTED_SCHEMA_VERSION: i64 = 1;
@@ -123,6 +132,11 @@ pub fn list_snapshots(base: &Path) -> Result<Vec<MeetingMeta>, String> {
                 Some(last - first)
             })
             .unwrap_or(0);
+        let name = value
+            .get("name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let name_locked_by_user = value.get("nameLockedByUser").and_then(|v| v.as_bool());
         metas.push(MeetingMeta {
             id,
             started_at,
@@ -132,6 +146,8 @@ pub fn list_snapshots(base: &Path) -> Result<Vec<MeetingMeta>, String> {
             edge_count,
             thought_count,
             transcript_duration_ms,
+            name,
+            name_locked_by_user,
         });
     }
     // Newest first — by endedAt, falling back to startedAt.
@@ -292,5 +308,34 @@ mod tests {
         let base = fresh_base("delete-missing");
         let err = delete_snapshot(&base, "nope").unwrap_err();
         assert!(err.contains("not found"), "got: {err}");
+    }
+
+    #[test]
+    fn legacy_snapshot_without_name_loads() {
+        // AIZ-11 / AIZ-19 era snapshots have no `name` or `nameLockedByUser`.
+        // They must still load and list cleanly (name surfaced as None).
+        let base = fresh_base("legacy-name");
+        let snap = sample("meeting-legacy", "live", 100, 200);
+        save_snapshot(&base, snap).unwrap();
+        let loaded = load_snapshot(&base, "meeting-legacy").unwrap();
+        assert_eq!(loaded["id"], "meeting-legacy");
+        assert!(loaded.get("name").is_none());
+        let metas = list_snapshots(&base).unwrap();
+        assert_eq!(metas.len(), 1);
+        assert!(metas[0].name.is_none());
+        assert!(metas[0].name_locked_by_user.is_none());
+    }
+
+    #[test]
+    fn snapshot_with_name_surfaces_in_meta() {
+        let base = fresh_base("named");
+        let mut snap = sample("meeting-named", "live", 100, 200);
+        snap["name"] = serde_json::json!("Postgres migration sync");
+        snap["nameLockedByUser"] = serde_json::json!(true);
+        save_snapshot(&base, snap).unwrap();
+        let metas = list_snapshots(&base).unwrap();
+        assert_eq!(metas.len(), 1);
+        assert_eq!(metas[0].name.as_deref(), Some("Postgres migration sync"));
+        assert_eq!(metas[0].name_locked_by_user, Some(true));
     }
 }

@@ -29,6 +29,10 @@ export interface MeetingSnapshot {
 	transcript: TranscriptChunk[];
 	passes: PassRecord[];
 	stats: RunStats;
+	/** AIZ-16: AI-generated or user-overridden meeting name. Optional for backwards compat. */
+	name?: string;
+	/** AIZ-16: True when the user typed the name. AI re-proposals are skipped while true. */
+	nameLockedByUser?: boolean;
 }
 
 export interface MeetingMeta {
@@ -40,6 +44,8 @@ export interface MeetingMeta {
 	edgeCount: number;
 	thoughtCount: number;
 	transcriptDurationMs: number;
+	name?: string;
+	nameLockedByUser?: boolean;
 }
 
 export interface BuildSnapshotInput {
@@ -51,6 +57,8 @@ export interface BuildSnapshotInput {
 	transcript: TranscriptChunk[];
 	passes: PassRecord[];
 	stats: RunStats;
+	name?: string;
+	nameLockedByUser?: boolean;
 }
 
 function uuid(): string {
@@ -68,7 +76,7 @@ export function newMeetingId(): string {
 }
 
 export function buildSnapshot(input: BuildSnapshotInput): MeetingSnapshot {
-	return {
+	const snap: MeetingSnapshot = {
 		id: input.id ?? newMeetingId(),
 		schemaVersion: SCHEMA_VERSION,
 		startedAt: input.startedAt,
@@ -80,6 +88,10 @@ export function buildSnapshot(input: BuildSnapshotInput): MeetingSnapshot {
 		passes: input.passes,
 		stats: input.stats,
 	};
+	if (input.name !== undefined) snap.name = input.name;
+	if (input.nameLockedByUser !== undefined)
+		snap.nameLockedByUser = input.nameLockedByUser;
+	return snap;
 }
 
 export function saveSnapshot(snapshot: MeetingSnapshot): Promise<string> {

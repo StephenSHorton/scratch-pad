@@ -18,6 +18,7 @@ import {
 import { standupTranscript } from "@/lib/aizuchi/fixtures/standup-transcript";
 import { mutateGraph } from "@/lib/aizuchi/graph-mutation";
 import { generateMeetingNotes } from "@/lib/aizuchi/meeting-notes";
+import { proposeMeetingName } from "@/lib/aizuchi/name-generator";
 import {
 	buildSnapshot,
 	loadSnapshot,
@@ -52,6 +53,14 @@ const RECENT_TRANSCRIPT_WINDOW_MS = 60_000;
  * resumed chunk so the transcript stays monotonic and the boundary is
  * obvious in the live-transcript expand. */
 const RESUME_GAP_MS = 1_000;
+
+// AIZ-16 — meeting naming. Propose once enough signal exists, then opportunistically
+// re-propose as the topic evolves. The "min batches" gate piggybacks on the
+// existing batch loop instead of introducing a separate timer.
+const NAME_MIN_TRANSCRIPT_MS = 30_000;
+const NAME_MIN_BATCHES = 1;
+const NAME_REPROPOSE_INTERVAL_MS = 60_000;
+const NAME_REPROPOSE_MIN_BATCHES = 4;
 
 export type Status =
 	| "idle"
@@ -95,6 +104,9 @@ export interface MeetingSession {
 	setTranscriptOpen: Dispatch<SetStateAction<boolean>>;
 	generatingNotes: boolean;
 	archivedAt: number | null;
+	name: string | null;
+	nameLockedByUser: boolean;
+	setMeetingName: (name: string) => void;
 	startDemo: () => Promise<void>;
 	startLive: () => Promise<void>;
 	resumeLive: () => Promise<void>;
@@ -128,6 +140,8 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 	const [mode, setMode] = useState<Mode>("idle");
 	const [generatingNotes, setGeneratingNotes] = useState(false);
 	const [archivedAt, setArchivedAt] = useState<number | null>(null);
+	const [name, setName] = useState<string | null>(null);
+	const [nameLockedByUser, setNameLockedByUser] = useState(false);
 
 	const consumedChunksRef = useRef(0);
 	const thoughtsRef = useRef<AIThoughtRecord[]>([]);
@@ -140,6 +154,13 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 	const modeRef = useRef<Mode>("idle");
 	const meetingIdRef = useRef<string>(meetingId);
 	const startedAtRef = useRef<number>(Date.now());
+	// AIZ-16 — naming refs. Tracked alongside graph/transcript so the save path
+	// and the proposer always see the latest values without waiting for state.
+	const nameRef = useRef<string | null>(null);
+	const nameLockedRef = useRef(false);
+	const lastNameProposeAtRef = useRef(0);
+	const lastNameProposeBatchRef = useRef(0);
+	const namingInFlightRef = useRef(false);
 	// Holds the latest saveCurrentMeeting impl so the audio-phase listener
 	// (registered once) can always call the current version.
 	const saveCurrentMeetingRef = useRef<
@@ -233,6 +254,15 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		setPasses([]);
 		setArchivedAt(null);
 		setStatus("listening");
+		// AIZ-16 — clear naming state for a fresh session. Resume reuses
+		// existing values and goes through resumeLive instead.
+		nameRef.current = null;
+		nameLockedRef.current = false;
+		lastNameProposeAtRef.current = 0;
+		lastNameProposeBatchRef.current = 0;
+		namingInFlightRef.current = false;
+		setName(null);
+		setNameLockedByUser(false);
 		emitGraph(startGraph);
 		return startGraph;
 	};
@@ -256,6 +286,8 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 				transcript: transcriptRef.current,
 				passes: passesRef.current,
 				stats: statsRef.current,
+				name: nameRef.current ?? undefined,
+				nameLockedByUser: nameLockedRef.current,
 			});
 			const id = await saveSnapshot(snap);
 			console.log(`[meeting] saved snapshot ${id}`);
@@ -322,6 +354,16 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		modeRef.current = nextMode;
 		setStatus("archived");
 		setArchivedAt(snap.endedAt);
+		// AIZ-16 — restore naming state. Both fields are optional on disk.
+		// Throttle counters reset to 0 so a resumed live session can re-propose
+		// once enough new content lands (subject to the same gating thresholds).
+		nameRef.current = snap.name ?? null;
+		nameLockedRef.current = snap.nameLockedByUser ?? false;
+		lastNameProposeAtRef.current = 0;
+		lastNameProposeBatchRef.current = 0;
+		namingInFlightRef.current = false;
+		setName(snap.name ?? null);
+		setNameLockedByUser(snap.nameLockedByUser ?? false);
 		// The outline window may mount after us — retry the graph emit a
 		// few times so it picks up the saved state regardless of order.
 		[200, 700, 1500].forEach((d) =>
@@ -347,6 +389,68 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [meetingId]);
+
+	// AIZ-16 — propose a meeting name when there's enough signal and we're
+	// not locked. Called from runSession after each batch settles. Designed
+	// to be cheap: bails fast when not eligible, and runs the LLM call
+	// fire-and-forget so it never blocks the batch loop.
+	const proposeNameIfStale = (idx: number) => {
+		if (nameLockedRef.current) return;
+		if (namingInFlightRef.current) return;
+		if (idx < NAME_MIN_BATCHES) return;
+		const transcript = transcriptRef.current;
+		if (transcript.length === 0) return;
+		const transcriptDurMs =
+			(transcript[transcript.length - 1]?.endMs ?? 0) -
+			(transcript[0]?.startMs ?? 0);
+		if (transcriptDurMs < NAME_MIN_TRANSCRIPT_MS) return;
+
+		const isFirst = nameRef.current == null;
+		const now = Date.now();
+		if (!isFirst) {
+			// Re-propose throttle — wall-clock OR batch-count, whichever is
+			// stricter. Piggybacks on the existing batch loop instead of a
+			// separate setInterval.
+			const sinceMs = now - lastNameProposeAtRef.current;
+			const sinceBatches = idx - lastNameProposeBatchRef.current;
+			if (
+				sinceMs < NAME_REPROPOSE_INTERVAL_MS ||
+				sinceBatches < NAME_REPROPOSE_MIN_BATCHES
+			) {
+				return;
+			}
+		}
+
+		namingInFlightRef.current = true;
+		lastNameProposeAtRef.current = now;
+		lastNameProposeBatchRef.current = idx;
+
+		// Snapshot inputs so a later batch mutating the graph mid-call
+		// doesn't corrupt the prompt.
+		const graphSnap = graphRef.current;
+		const transcriptSnap = transcript.slice();
+
+		proposeMeetingName(graphSnap, transcriptSnap)
+			.then((proposal) => {
+				// User may have locked or session may have ended while we waited.
+				if (nameLockedRef.current) return;
+				if (signalRef.current.cancelled) return;
+				const proposed = proposal.name.trim();
+				if (!proposed) return;
+				if (proposed === nameRef.current) return;
+				nameRef.current = proposed;
+				setName(proposed);
+				console.log(
+					`[meeting-name] proposed "${proposed}" (${Math.round(proposal.latencyMs)}ms ${proposal.providerLabel})`,
+				);
+			})
+			.catch((err) => {
+				console.warn("[meeting-name] propose failed:", err);
+			})
+			.finally(() => {
+				namingInFlightRef.current = false;
+			});
+	};
 
 	const runSession = async (
 		source: AsyncIterable<Batch>,
@@ -409,6 +513,9 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 						(result.usage?.outputTokens ?? 0),
 					providerLabel: result.providerLabel,
 				});
+
+				// AIZ-16 — fire-and-forget; never blocks the batch loop.
+				proposeNameIfStale(idx);
 
 				await new Promise((r) => setTimeout(r, HIGHLIGHT_MS));
 				if (signal.cancelled) return;
@@ -597,7 +704,25 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		setPasses([]);
 		setArchivedAt(null);
 		setStatus("idle");
+		// AIZ-16 — reset naming state alongside everything else.
+		nameRef.current = null;
+		nameLockedRef.current = false;
+		lastNameProposeAtRef.current = 0;
+		lastNameProposeBatchRef.current = 0;
+		namingInFlightRef.current = false;
+		setName(null);
+		setNameLockedByUser(false);
 		emitGraph(empty);
+	};
+
+	// AIZ-16 — public setter. User-typed name locks the AI naming loop.
+	const setMeetingName = (next: string) => {
+		const trimmed = next.trim();
+		if (!trimmed) return;
+		nameRef.current = trimmed;
+		nameLockedRef.current = true;
+		setName(trimmed);
+		setNameLockedByUser(true);
 	};
 
 	const generateNotes = async () => {
@@ -644,6 +769,9 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		setTranscriptOpen,
 		generatingNotes,
 		archivedAt,
+		name,
+		nameLockedByUser,
+		setMeetingName,
 		startDemo,
 		startLive,
 		resumeLive,

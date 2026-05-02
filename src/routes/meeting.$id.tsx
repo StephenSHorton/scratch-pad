@@ -97,6 +97,9 @@ function MeetingPrototype() {
 							stats={session.stats}
 							generatingNotes={session.generatingNotes}
 							archivedAt={session.archivedAt}
+							name={session.name}
+							nameLockedByUser={session.nameLockedByUser}
+							onSetName={session.setMeetingName}
 							onStartDemo={session.startDemo}
 							onStartLive={session.startLive}
 							onResumeLive={session.resumeLive}
