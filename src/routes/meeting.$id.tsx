@@ -99,6 +99,7 @@ function MeetingPrototype() {
 							archivedAt={session.archivedAt}
 							onStartDemo={session.startDemo}
 							onStartLive={session.startLive}
+							onResumeLive={session.resumeLive}
 							onStopLive={session.stopLive}
 							onPause={session.pauseDemo}
 							onResume={session.resumeDemo}

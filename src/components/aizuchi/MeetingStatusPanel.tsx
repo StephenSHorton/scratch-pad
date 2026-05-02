@@ -14,6 +14,7 @@ export function MeetingStatusPanel({
 	archivedAt,
 	onStartDemo,
 	onStartLive,
+	onResumeLive,
 	onStopLive,
 	onPause,
 	onResume,
@@ -31,6 +32,7 @@ export function MeetingStatusPanel({
 	archivedAt: number | null;
 	onStartDemo: () => void;
 	onStartLive: () => void;
+	onResumeLive: () => void;
 	onStopLive: () => void;
 	onPause: () => void;
 	onResume: () => void;
@@ -178,6 +180,15 @@ export function MeetingStatusPanel({
 						className="rounded-md bg-secondary px-2.5 py-1 text-xs font-medium text-secondary-foreground hover:bg-secondary/80"
 					>
 						Reset
+					</button>
+				)}
+				{isArchived && isLive && (
+					<button
+						type="button"
+						onClick={onResumeLive}
+						className="rounded-md bg-red-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-red-500"
+					>
+						● Resume
 					</button>
 				)}
 				{isArchived && (

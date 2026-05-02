@@ -48,6 +48,10 @@ const HIGHLIGHT_MS = 1500;
 export const SPEED_MULTIPLIER = 4;
 /** Sliding-window of transcript fed to the model for coreference / context. */
 const RECENT_TRANSCRIPT_WINDOW_MS = 60_000;
+/** Visible gap inserted between the last original chunk and the first
+ * resumed chunk so the transcript stays monotonic and the boundary is
+ * obvious in the live-transcript expand. */
+const RESUME_GAP_MS = 1_000;
 
 export type Status =
 	| "idle"
@@ -93,6 +97,7 @@ export interface MeetingSession {
 	archivedAt: number | null;
 	startDemo: () => Promise<void>;
 	startLive: () => Promise<void>;
+	resumeLive: () => Promise<void>;
 	stopLive: () => Promise<void>;
 	pauseDemo: () => void;
 	resumeDemo: () => void;
@@ -445,14 +450,10 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		await runSession(source, "demo", startGraph);
 	};
 
-	const startLive = async () => {
-		if (runningRef.current) return;
-		runningRef.current = true;
-		const startGraph = resetSessionState("live");
-		meetingIdRef.current = newMeetingId();
-		startedAtRef.current = Date.now();
-		sessionSavedRef.current = false;
-
+	const _startLiveCore = async (opts: {
+		startGraph: Graph;
+		chunkOffsetMs: number;
+	}) => {
 		try {
 			await invoke("start_live_capture");
 		} catch (err) {
@@ -469,6 +470,7 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 			sizeThresholdWords: LIVE_SIZE_THRESHOLD_WORDS,
 			timeThresholdMs: LIVE_TIME_THRESHOLD_MS,
 			chunkCountThreshold: LIVE_CHUNK_COUNT_THRESHOLD,
+			chunkOffsetMs: opts.chunkOffsetMs,
 			signal: signalRef.current,
 			onChunk: (chunk) => {
 				console.log(
@@ -477,7 +479,63 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 				pushChunk(chunk);
 			},
 		});
-		await runSession(source, "live", startGraph);
+		await runSession(source, "live", opts.startGraph);
+	};
+
+	const startLive = async () => {
+		if (runningRef.current) return;
+		runningRef.current = true;
+		const startGraph = resetSessionState("live");
+		meetingIdRef.current = newMeetingId();
+		startedAtRef.current = Date.now();
+		sessionSavedRef.current = false;
+		await _startLiveCore({ startGraph, chunkOffsetMs: 0 });
+	};
+
+	const resumeLive = async () => {
+		if (runningRef.current) return;
+		// Resume only makes sense for an archived live snapshot. Demo
+		// resumes are out of scope (AIZ-19).
+		if (status !== "archived" || modeRef.current !== "live") return;
+		runningRef.current = true;
+
+		// Keep meetingIdRef / startedAtRef pinned to the snapshot — same
+		// file, same start time. Refs (graph / transcript / passes / stats /
+		// thoughts) are already hydrated.
+		signalRef.current = { cancelled: false, paused: false };
+		// Reset the dedupe ref so the audio-phase: done listener can fire
+		// the auto-save again on the next stop. Without this, the listener
+		// would short-circuit because the previous live session set the ref
+		// to true before archiving.
+		sessionSavedRef.current = false;
+		setError(null);
+		setArchivedAt(null);
+		setStatus("listening");
+
+		// Compute the offset that the live feeder should add to incoming
+		// chunks so they land *after* the existing transcript array.
+		const lastChunk = transcriptRef.current[transcriptRef.current.length - 1];
+		const lastEndMs = lastChunk?.endMs ?? 0;
+		const chunkOffsetMs = lastEndMs + RESUME_GAP_MS;
+
+		// Optional UX boundary marker — cheap, makes the resume point
+		// obvious in the transcript expand. Mark with a clear comment so
+		// it's easy to rip out if a UI-only separator is preferred.
+		// --- BEGIN resume boundary marker (optional UX) ---
+		if (lastChunk) {
+			const now = new Date();
+			const hh = now.getHours().toString().padStart(2, "0");
+			const mm = now.getMinutes().toString().padStart(2, "0");
+			pushChunk({
+				speaker: "—",
+				text: `(resumed at ${hh}:${mm})`,
+				startMs: lastEndMs,
+				endMs: lastEndMs + RESUME_GAP_MS,
+			});
+		}
+		// --- END resume boundary marker ---
+
+		await _startLiveCore({ startGraph: graphRef.current, chunkOffsetMs });
 	};
 
 	const pauseDemo = () => {
@@ -588,6 +646,7 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		archivedAt,
 		startDemo,
 		startLive,
+		resumeLive,
 		stopLive,
 		pauseDemo,
 		resumeDemo,
