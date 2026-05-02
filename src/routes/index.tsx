@@ -3,6 +3,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useState } from "react";
+import { MeetingOutline } from "@/components/aizuchi/MeetingOutline";
+import { RecordingSession } from "@/components/aizuchi/RecordingSession";
+import { Palette } from "@/components/palette/Palette";
+import { useCommandPaletteHotkey } from "@/hooks/useCommandPaletteHotkey";
 import { NoteEditor } from "../lexical/NoteEditor";
 
 // Note type
@@ -87,7 +91,13 @@ function StickyNote() {
 	const isRemote = windowLabel.startsWith("remote-");
 	const isLogs = windowLabel === "logs";
 	const isLobby = windowLabel === "lobby";
+	const isPalette = windowLabel === "palette";
+	const isRecordingSession = windowLabel === "recording-session";
+	const isMeetingOutline = windowLabel.startsWith("meeting-outline-");
 	const noteId = isRemote ? windowLabel.replace("remote-", "") : windowLabel;
+
+	// Cmd+K opens the command palette (no-op when this window IS the palette)
+	useCommandPaletteHotkey();
 
 	// Log viewer: poll for new content every 1.5s
 	useEffect(() => {
@@ -136,17 +146,24 @@ function StickyNote() {
 
 	// Listen for highlight events from MCP (local notes only)
 	useEffect(() => {
-		if (isLogs || isRemote) return;
+		if (isLogs || isRemote || isPalette || isMeetingOutline || isRecordingSession) return;
 		const unlisten = listen<string>("note-highlight", (event) => {
 			setHighlightPattern(event.payload);
 		});
 		return () => {
 			unlisten.then((fn) => fn());
 		};
-	}, [isLogs, isRemote]);
+	}, [isLogs, isRemote, isPalette, isMeetingOutline]);
 
 	useEffect(() => {
-		if (isLogs || isLobby) return; // Skip note fetching for log viewer / lobby
+		if (
+			isLogs ||
+			isLobby ||
+			isPalette ||
+			isMeetingOutline ||
+			isRecordingSession
+		)
+			return; // Skip note fetching for non-note windows
 		if (isRemote) {
 			// Fetch remote note data from Tauri backend
 			invoke<RemoteNote | null>("get_remote_note", { id: noteId }).then(
@@ -226,6 +243,21 @@ function StickyNote() {
 			invoke("clear_note_highlight", { id: note.id }).catch(() => {});
 		}
 	}, [note]);
+
+	// Command palette rendering
+	if (isPalette) {
+		return <Palette />;
+	}
+
+	// Recording session rendering
+	if (isRecordingSession) {
+		return <RecordingSession />;
+	}
+
+	// Meeting outline rendering
+	if (isMeetingOutline) {
+		return <MeetingOutline />;
+	}
 
 	// Log viewer rendering
 	if (isLogs) {

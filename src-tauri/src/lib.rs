@@ -1,3 +1,5 @@
+mod audio;
+mod meetings;
 mod network;
 
 use chrono::{DateTime, Utc};
@@ -10,7 +12,10 @@ use std::thread;
 use std::time::Duration;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIconBuilder;
+use tauri::webview::Color;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
+
+const TRANSPARENT_BG: Color = Color(0, 0, 0, 0);
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_updater::UpdaterExt;
 
@@ -62,6 +67,15 @@ impl Default for Settings {
 
 pub struct SettingsState {
     pub settings: Mutex<Settings>,
+}
+
+pub struct PaletteState {
+    pub source_label: Mutex<Option<String>>,
+}
+
+pub struct LiveAudioState {
+    pub capture: Mutex<Option<audio::LiveCapture>>,
+    pub phase: Mutex<(String, String)>,
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +170,147 @@ fn create_blank_note() {
     write_notes(&notes);
 }
 
+fn create_note_with_body(title: Option<String>, body: String, color: &str) {
+    log("Creating note with body");
+    let note = Note {
+        id: uuid::Uuid::new_v4().to_string(),
+        title,
+        body,
+        color: color.to_string(),
+        created_at: Utc::now().to_rfc3339(),
+        expires_at: None,
+        position: None,
+        size: None,
+    };
+    let mut notes = read_notes();
+    notes.push(note);
+    write_notes(&notes);
+}
+
+fn always_on_top_setting(app: &AppHandle) -> bool {
+    app.try_state::<SettingsState>()
+        .and_then(|s| s.settings.lock().ok().map(|s| s.always_on_top))
+        .unwrap_or(false)
+}
+
+fn open_logs_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("logs") {
+        window.set_focus().ok();
+        return;
+    }
+    WebviewWindowBuilder::new(app, "logs", WebviewUrl::default())
+        .title("Scratch Pad Logs")
+        .decorations(false)
+        .transparent(true)
+        .background_color(TRANSPARENT_BG)
+        .always_on_top(always_on_top_setting(app))
+        .inner_size(520.0, 400.0)
+        .build()
+        .ok();
+}
+
+fn open_lobby_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("lobby") {
+        window.set_focus().ok();
+        return;
+    }
+    WebviewWindowBuilder::new(app, "lobby", WebviewUrl::default())
+        .title("Multiplayer")
+        .decorations(false)
+        .transparent(true)
+        .background_color(TRANSPARENT_BG)
+        .always_on_top(always_on_top_setting(app))
+        .inner_size(400.0, 500.0)
+        .center()
+        .build()
+        .ok();
+}
+
+fn open_meeting_window(app: &AppHandle, meeting_id: Option<&str>) {
+    let id = meeting_id.unwrap_or("test");
+    let graph_label = format!("meeting-{id}");
+    let outline_label = format!("meeting-outline-{id}");
+
+    // Compute monitor-relative geometry so the graph + outline windows
+    // are paired on-screen with safe edge margins and reasonable caps.
+    let (sw, sh, sx, sy) = match app.primary_monitor() {
+        Ok(Some(m)) => {
+            let size = m.size();
+            let pos = m.position();
+            let scale = m.scale_factor();
+            (
+                size.width as f64 / scale,
+                size.height as f64 / scale,
+                pos.x as f64 / scale,
+                pos.y as f64 / scale,
+            )
+        }
+        _ => (1440.0, 900.0, 0.0, 0.0),
+    };
+
+    let margin = (sw * 0.05).max(40.0);
+    let avail_w = (sw - 2.0 * margin).max(960.0);
+    let total_h = (sh * 0.85).min(1000.0);
+    let gap = 16.0;
+
+    let outline_w = (avail_w * 0.28).clamp(360.0, 480.0);
+    let graph_w = (avail_w - outline_w - gap).min(1400.0);
+    let pair_w = graph_w + gap + outline_w;
+
+    let x_graph = sx + (sw - pair_w) / 2.0;
+    let x_outline = x_graph + graph_w + gap;
+    let y = sy + (sh - total_h) / 2.0;
+
+    if let Some(window) = app.get_webview_window(&graph_label) {
+        window.set_focus().ok();
+    } else {
+        WebviewWindowBuilder::new(
+            app,
+            &graph_label,
+            WebviewUrl::App(format!("meeting/{id}").into()),
+        )
+        .title("Aizuchi — meeting prototype")
+        .inner_size(graph_w, total_h)
+        .position(x_graph, y)
+        .build()
+        .ok();
+    }
+
+    if let Some(window) = app.get_webview_window(&outline_label) {
+        window.set_focus().ok();
+    } else {
+        WebviewWindowBuilder::new(app, &outline_label, WebviewUrl::default())
+            .title("Aizuchi — outline")
+            .inner_size(outline_w, total_h)
+            .position(x_outline, y)
+            .build()
+            .ok();
+    }
+}
+
+fn open_palette_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("palette") {
+        window.set_focus().ok();
+        return;
+    }
+    // Pure-transparent window — the glass is CSS (backdrop-filter + bg-black/40)
+    // so it animates in as one unit with the motion fade. Native vibrancy
+    // would render before React mounts, causing a visible two-step appear.
+    WebviewWindowBuilder::new(app, "palette", WebviewUrl::default())
+        .title("Command Palette")
+        .decorations(false)
+        .transparent(true)
+        .background_color(TRANSPARENT_BG)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .resizable(false)
+        .inner_size(640.0, 420.0)
+        .center()
+        .focused(true)
+        .build()
+        .ok();
+}
+
 // ---------------------------------------------------------------------------
 // Tauri commands
 // ---------------------------------------------------------------------------
@@ -219,6 +374,12 @@ fn update_note_position(id: String, x: f64, y: f64, state: tauri::State<'_, Note
     }
 }
 
+#[tauri::command]
+fn create_note(title: Option<String>, body: String, color: Option<String>) {
+    let color_str = color.unwrap_or_else(|| "yellow".to_string());
+    create_note_with_body(title, body, &color_str);
+}
+
 // ---------------------------------------------------------------------------
 // Highlight commands
 // ---------------------------------------------------------------------------
@@ -236,6 +397,312 @@ fn clear_note_highlight(id: String) -> Result<(), String> {
     let json = serde_json::to_string_pretty(&highlights).map_err(|e| e.to_string())?;
     fs::write(&path, json).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Command palette
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn open_palette(
+    app: AppHandle,
+    source_label: Option<String>,
+    palette_state: tauri::State<'_, PaletteState>,
+) {
+    if let Ok(mut slot) = palette_state.source_label.lock() {
+        *slot = source_label;
+    }
+    open_palette_window(&app);
+}
+
+#[tauri::command]
+fn close_palette(app: AppHandle) {
+    if let Some(window) = app.get_webview_window("palette") {
+        window.close().ok();
+    }
+}
+
+#[tauri::command]
+fn get_palette_context(palette_state: tauri::State<'_, PaletteState>) -> Option<String> {
+    palette_state
+        .source_label
+        .lock()
+        .ok()
+        .and_then(|s| s.clone())
+}
+
+#[tauri::command]
+fn dispatch_action(app: AppHandle, id: String, state: tauri::State<'_, NotesState>) {
+    log(&format!("dispatch_action: {id}"));
+    match id.as_str() {
+        "new_pad" => create_blank_note(),
+        "organize" => organize_windows(&app, &state),
+        "show_logs" => open_logs_window(&app),
+        "lobby" => open_lobby_window(&app),
+        "aizuchi" => open_meeting_window(&app, None),
+        _ => log(&format!("dispatch_action: unknown id {id}")),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Meeting persistence commands (AIZ-11)
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+fn save_meeting(snapshot: serde_json::Value) -> Result<String, String> {
+    meetings::save_snapshot(&notes_dir(), snapshot)
+}
+
+#[tauri::command]
+fn list_meetings() -> Result<Vec<meetings::MeetingMeta>, String> {
+    meetings::list_snapshots(&notes_dir())
+}
+
+#[tauri::command]
+fn load_meeting(id: String) -> Result<serde_json::Value, String> {
+    meetings::load_snapshot(&notes_dir(), &id)
+}
+
+#[tauri::command]
+fn open_meeting(app: AppHandle, id: Option<String>) {
+    open_meeting_window(&app, id.as_deref());
+}
+
+// ---------------------------------------------------------------------------
+// Audio commands
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+async fn record_test_audio(duration_secs: Option<u32>) -> Result<String, String> {
+    let secs = duration_secs.unwrap_or(5);
+    let path = notes_dir().join("test-recording.wav");
+    let path_clone = path.clone();
+    log(&format!("record_test_audio: starting {secs}s capture → {path:?}"));
+    tauri::async_runtime::spawn_blocking(move || audio::record_to_file(secs, path_clone, |_| {}))
+        .await
+        .map_err(|e| format!("Recording task failed: {e}"))??;
+    log(&format!("record_test_audio: completed → {path:?}"));
+    Ok(path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn start_live_capture(
+    app: AppHandle,
+    state: tauri::State<'_, LiveAudioState>,
+) -> Result<(), String> {
+    {
+        let guard = state.capture.lock().map_err(|e| e.to_string())?;
+        if guard.is_some() {
+            return Err("Live capture already running".into());
+        }
+    }
+
+    let model_path = notes_dir().join("models").join(audio::MODEL_FILENAME);
+    open_recording_session_window(&app);
+    emit_phase(&app, "downloading", "Loading model…");
+
+    let app_for_model = app.clone();
+    let model_path_clone = model_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        audio::ensure_model(&model_path_clone, audio::MODEL_URL)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    emit_phase(&app_for_model, "live", "Live");
+
+    let app_level = app.clone();
+    let app_seg = app.clone();
+    let capture = audio::start_live_capture(
+        model_path,
+        move |level| {
+            let _ = app_level.emit("audio-level", level);
+        },
+        move |seg| {
+            let _ = app_seg.emit(
+                "transcript-chunk",
+                serde_json::json!({
+                    "speaker": seg.speaker,
+                    "text": seg.text,
+                    "startMs": seg.start_ms,
+                    "endMs": seg.end_ms,
+                }),
+            );
+        },
+    )?;
+
+    *state.capture.lock().map_err(|e| e.to_string())? = Some(capture);
+    log("start_live_capture: running");
+    Ok(())
+}
+
+#[tauri::command]
+fn stop_live_capture(
+    app: AppHandle,
+    state: tauri::State<'_, LiveAudioState>,
+) -> Result<(), String> {
+    let capture = state
+        .capture
+        .lock()
+        .map_err(|e| e.to_string())?
+        .take();
+    if let Some(c) = capture {
+        c.stop();
+        log("stop_live_capture: stopped");
+    }
+    emit_phase(&app, "done", "Stopped");
+    schedule_close_recording_session(app, 800);
+    Ok(())
+}
+
+#[tauri::command]
+async fn record_and_transcribe(
+    app: AppHandle,
+    duration_secs: Option<u32>,
+) -> Result<String, String> {
+    let secs = duration_secs.unwrap_or(5);
+    let wav_path = notes_dir().join("test-recording.wav");
+    let model_path = notes_dir().join("models").join(audio::MODEL_FILENAME);
+    log(&format!(
+        "record_and_transcribe: starting {secs}s capture → {wav_path:?}"
+    ));
+
+    open_recording_session_window(&app);
+    let app_record = app.clone();
+    let app_status = app.clone();
+    emit_phase(&app, "recording", &format!("Recording — {secs}s"));
+
+    let wav = wav_path.clone();
+    let model = model_path.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        let level_cb = move |level: f32| {
+            let _ = app_record.emit("audio-level", level);
+        };
+        audio::record_to_file(secs, wav.clone(), level_cb)?;
+        emit_phase(&app_status, "downloading", "Loading model…");
+        audio::ensure_model(&model, audio::MODEL_URL)?;
+        emit_phase(&app_status, "transcribing", "Transcribing…");
+        let segments = audio::transcribe_file(&model, &wav)?;
+        Ok(segments
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+            .trim()
+            .to_string())
+    })
+    .await
+    .map_err(|e| format!("Audio task failed: {e}"))?;
+
+    match result {
+        Ok(text) => {
+            log(&format!("record_and_transcribe: result = {text:?}"));
+            let body = if text.is_empty() {
+                "(empty transcript — try recording again)".to_string()
+            } else {
+                text.clone()
+            };
+            create_note_with_body(Some("Transcript".to_string()), body, "blue");
+            emit_phase(&app, "done", "Transcript ready");
+            schedule_close_recording_session(app.clone(), 1200);
+            Ok(text)
+        }
+        Err(e) => {
+            log(&format!("record_and_transcribe: error = {e}"));
+            emit_phase(&app, "error", &e);
+            schedule_close_recording_session(app.clone(), 4000);
+            Err(e)
+        }
+    }
+}
+
+fn emit_phase(app: &AppHandle, phase: &str, label: &str) {
+    if let Some(state) = app.try_state::<LiveAudioState>() {
+        if let Ok(mut guard) = state.phase.lock() {
+            *guard = (phase.to_string(), label.to_string());
+        }
+    }
+    let _ = app.emit(
+        "audio-phase",
+        serde_json::json!({ "phase": phase, "label": label }),
+    );
+}
+
+#[tauri::command]
+fn get_audio_phase(state: tauri::State<'_, LiveAudioState>) -> Result<(String, String), String> {
+    state
+        .phase
+        .lock()
+        .map(|g| g.clone())
+        .map_err(|e| e.to_string())
+}
+
+fn schedule_close_recording_session(app: AppHandle, delay_ms: u64) {
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        if let Some(window) = app.get_webview_window("recording-session") {
+            window.close().ok();
+        }
+    });
+}
+
+fn open_recording_session_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("recording-session") {
+        window.set_focus().ok();
+        return;
+    }
+    WebviewWindowBuilder::new(app, "recording-session", WebviewUrl::default())
+        .title("Recording")
+        .decorations(false)
+        .transparent(true)
+        .background_color(TRANSPARENT_BG)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .resizable(true)
+        .inner_size(480.0, 600.0)
+        .center()
+        .focused(false)
+        .build()
+        .ok();
+}
+
+#[tauri::command]
+async fn transcribe_test_audio() -> Result<String, String> {
+    let wav_path = notes_dir().join("test-recording.wav");
+    if !wav_path.exists() {
+        return Err(
+            "No test-recording.wav found. Run 'Test mic recording' first.".into(),
+        );
+    }
+    let model_path = notes_dir().join("models").join(audio::MODEL_FILENAME);
+    log(&format!(
+        "transcribe_test_audio: starting (model={model_path:?}, wav={wav_path:?})"
+    ));
+
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        audio::ensure_model(&model_path, audio::MODEL_URL)?;
+        let segments = audio::transcribe_file(&model_path, &wav_path)?;
+        Ok(segments
+            .iter()
+            .map(|s| s.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ")
+            .trim()
+            .to_string())
+    })
+    .await
+    .map_err(|e| format!("Transcription task failed: {e}"))??;
+
+    log(&format!("transcribe_test_audio: result = {result:?}"));
+
+    let body = if result.is_empty() {
+        "(empty transcript — try recording again)".to_string()
+    } else {
+        result.clone()
+    };
+    create_note_with_body(Some("Transcript".to_string()), body, "blue");
+
+    Ok(result)
 }
 
 // ---------------------------------------------------------------------------
@@ -546,6 +1013,7 @@ fn create_note_window(app: &AppHandle, note: &Note, _index: usize) {
         .title(note.title.as_deref().unwrap_or("Scratch Pad"))
         .decorations(false)
         .transparent(true)
+        .background_color(TRANSPARENT_BG)
         .always_on_top(always_on_top)
         .inner_size(win_w, win_h);
 
@@ -703,6 +1171,13 @@ pub fn run() {
         .manage(SettingsState {
             settings: Mutex::new(read_settings()),
         })
+        .manage(PaletteState {
+            source_label: Mutex::new(None),
+        })
+        .manage(LiveAudioState {
+            capture: Mutex::new(None),
+            phase: Mutex::new(("idle".to_string(), "Ready".to_string())),
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
@@ -715,6 +1190,7 @@ pub fn run() {
             update_note_body,
             update_note_color,
             update_note_position,
+            create_note,
             read_log_tail,
             clear_note_highlight,
             get_peers,
@@ -725,7 +1201,21 @@ pub fn run() {
             host_room,
             join_room,
             disconnect_peer,
-            get_local_network_info
+            get_local_network_info,
+            open_palette,
+            close_palette,
+            get_palette_context,
+            dispatch_action,
+            record_test_audio,
+            transcribe_test_audio,
+            record_and_transcribe,
+            start_live_capture,
+            stop_live_capture,
+            get_audio_phase,
+            save_meeting,
+            list_meetings,
+            load_meeting,
+            open_meeting,
         ])
         .setup(|app| {
             // Build the macOS menu bar
@@ -810,44 +1300,9 @@ pub fn run() {
                         let h = handle.clone();
                         tauri::async_runtime::spawn(check_for_updates(h, false));
                     }
-                    "show_logs" => {
-                        // Create or focus the log viewer window
-                        if let Some(window) = handle.get_webview_window("logs") {
-                            window.set_focus().ok();
-                        } else {
-                            let always_on_top = handle
-                                .try_state::<SettingsState>()
-                                .and_then(|s| s.settings.lock().ok().map(|s| s.always_on_top))
-                                .unwrap_or(false);
-                            WebviewWindowBuilder::new(&handle, "logs", WebviewUrl::default())
-                                .title("Scratch Pad Logs")
-                                .decorations(false)
-                                .transparent(true)
-                                .always_on_top(always_on_top)
-                                .inner_size(520.0, 400.0)
-                                .build()
-                                .ok();
-                        }
-                    }
-                    "lobby" | "tray_lobby" => {
-                        if let Some(window) = handle.get_webview_window("lobby") {
-                            window.set_focus().ok();
-                        } else {
-                            let always_on_top = handle
-                                .try_state::<SettingsState>()
-                                .and_then(|s| s.settings.lock().ok().map(|s| s.always_on_top))
-                                .unwrap_or(false);
-                            WebviewWindowBuilder::new(&handle, "lobby", WebviewUrl::default())
-                                .title("Multiplayer")
-                                .decorations(false)
-                                .transparent(true)
-                                .always_on_top(always_on_top)
-                                .inner_size(400.0, 500.0)
-                                .center()
-                                .build()
-                                .ok();
-                        }
-                    }
+                    "show_logs" => open_logs_window(&handle),
+                    "lobby" | "tray_lobby" => open_lobby_window(&handle),
+                    "tray_aizuchi" => open_meeting_window(&handle, None),
                     "always_on_top" => {
                         let on_top = {
                             let settings_state = handle.state::<SettingsState>();
@@ -884,6 +1339,8 @@ pub fn run() {
                     &MenuItem::with_id(app, "tray_organize", "Organize Pads", true, None::<&str>)?,
                     &PredefinedMenuItem::separator(app)?,
                     &MenuItem::with_id(app, "tray_lobby", "Multiplayer...", true, None::<&str>)?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &MenuItem::with_id(app, "tray_aizuchi", "Aizuchi prototype", true, None::<&str>)?,
                     &PredefinedMenuItem::separator(app)?,
                     &MenuItem::with_id(app, "tray_quit", "Quit Scratch Pad", true, None::<&str>)?,
                 ],
