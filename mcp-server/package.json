@@ -2,6 +2,7 @@
   "name": "aizuchi-mcp",
   "version": "1.0.0",
   "description": "MCP server for Aizuchi desktop app",
+  "license": "AGPL-3.0-or-later",
   "type": "module",
   "bin": {
     "aizuchi-mcp": "./dist/index.js"
