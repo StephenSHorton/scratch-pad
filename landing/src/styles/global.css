@@ -5,6 +5,12 @@
 @theme {
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
+
+  /* Brand palette — matches the Aizuchi app theme (src/index.css) */
+  --color-brand: oklch(0.48 0.11 160);          /* light-mode primary, deep forest */
+  --color-brand-light: oklch(0.72 0.13 160);    /* dark-mode primary, mint glow */
+  --color-brand-soft: oklch(0.85 0.07 160);     /* gradient soft stop, hover surfaces */
+  --color-brand-deep: oklch(0.30 0.08 160);     /* deepest variant, gradient anchor */
 }
 
 html {
