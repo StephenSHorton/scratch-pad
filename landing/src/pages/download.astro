@@ -1,6 +1,7 @@
 ---
 import Base from "../layouts/Base.astro";
 import Logo from "../components/Logo.astro";
+import BrandWord from "../components/BrandWord.astro";
 
 const githubUrl = "https://github.com/StephenSHorton/aizuchi";
 const releasesUrl = `${githubUrl}/releases/latest`;
@@ -127,7 +128,7 @@ const platforms = [
           <h1
             class="text-4xl font-semibold tracking-tight text-balance text-slate-900 sm:text-5xl dark:text-white"
           >
-            Download <span class="text-brand dark:text-brand-light">Aizuchi</span>
+            Download <BrandWord />
           </h1>
           <p
             class="mx-auto mt-6 max-w-2xl text-base leading-relaxed text-pretty text-slate-600 sm:text-lg dark:text-slate-400"
@@ -242,7 +243,7 @@ const platforms = [
       <div class="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 sm:flex-row">
         <div class="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-500">
           <Logo class="h-4 w-auto text-slate-400 dark:text-slate-600" />
-          <span>&copy; 2026 Aizuchi</span>
+          <span>&copy; 2026 <BrandWord /></span>
         </div>
         <a
           href={githubUrl}

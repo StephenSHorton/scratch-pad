@@ -1,6 +1,7 @@
 ---
 import Base from "../layouts/Base.astro";
 import Logo from "../components/Logo.astro";
+import BrandWord from "../components/BrandWord.astro";
 import MindmapPlaceholder from "../components/MindmapPlaceholder.astro";
 
 const githubUrl = "https://github.com/StephenSHorton/aizuchi";
@@ -72,7 +73,7 @@ const githubUrl = "https://github.com/StephenSHorton/aizuchi";
             </span>
           </h1>
           <p class="mx-auto mt-7 max-w-2xl text-base leading-relaxed text-pretty text-slate-600 sm:text-lg dark:text-slate-400">
-            Aizuchi builds a live mind-map of your meeting as the conversation unfolds —
+            <BrandWord /> builds a live mind-map of your meeting as the conversation unfolds —
             realtime synthesis during the meeting, not a post-hoc transcript like
             Granola, Otter, or tldv.
           </p>
@@ -135,12 +136,12 @@ const githubUrl = "https://github.com/StephenSHorton/aizuchi";
         <div class="mt-6 space-y-5 text-base leading-relaxed text-slate-600 sm:text-lg dark:text-slate-400">
           <p>
             In most meetings, no one is actively synthesizing the conversation while it happens.
-            Humans can't take notes and participate at full capacity at the same time. Aizuchi is
+            Humans can't take notes and participate at full capacity at the same time. <BrandWord /> is
             the participant whose only job is exactly that — rendered visibly, so everyone in the
             room can see, correct, and build on the shared understanding live.
           </p>
           <p>
-            <em class="not-italic font-medium text-slate-800 dark:text-slate-200">Aizuchi</em>
+            <em class="not-italic font-medium text-slate-800 dark:text-slate-200"><BrandWord /></em>
             (相槌) — the listener's backchanneling that signals "I'm following you."
             That's the product. The mind-map is how the AI does it.
           </p>
@@ -174,7 +175,7 @@ const githubUrl = "https://github.com/StephenSHorton/aizuchi";
       <div class="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 sm:flex-row">
         <div class="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-500">
           <Logo class="h-4 w-auto text-slate-400 dark:text-slate-600" />
-          <span>&copy; 2026 Aizuchi</span>
+          <span>&copy; 2026 <BrandWord /></span>
         </div>
         <a
           href={githubUrl}
