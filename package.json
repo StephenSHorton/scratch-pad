@@ -1,6 +1,7 @@
 {
 	"name": "tauri-app",
 	"private": true,
+	"license": "AGPL-3.0-or-later",
 	"type": "module",
 	"bin": {
 		"aizuchi": "./bin/aizuchi.ts"
