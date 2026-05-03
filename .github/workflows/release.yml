@@ -62,6 +62,40 @@ jobs:
           prerelease: false
           args: --target x86_64-apple-darwin
 
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: dtolnay/rust-toolchain@stable
+      - run: bun install
+      - run: cd mcp-server && bun install
+      - name: Build MCP sidecar
+        run: cd mcp-server && bun build --compile --minify --target=bun-linux-x64 src/index.ts --outfile ../src-tauri/binaries/aizuchi-mcp-x86_64-unknown-linux-gnu
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Aizuchi ${{ github.ref_name }}'
+          releaseBody: 'See the assets below to download and install.'
+          releaseDraft: false
+          prerelease: false
+          args: ''
+
   build-windows:
     runs-on: windows-latest
     steps:
@@ -91,7 +125,7 @@ jobs:
           args: --target x86_64-pc-windows-msvc
 
   updater:
-    needs: [build-aarch64, build-x64, build-windows]
+    needs: [build-aarch64, build-x64, build-windows, build-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
