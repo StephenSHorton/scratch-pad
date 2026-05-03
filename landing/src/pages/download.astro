@@ -5,23 +5,70 @@ import Logo from "../components/Logo.astro";
 const githubUrl = "https://github.com/StephenSHorton/aizuchi";
 const releasesUrl = `${githubUrl}/releases/latest`;
 
+interface ReleaseAsset {
+  name: string;
+  browser_download_url: string;
+  size: number;
+}
+interface Release {
+  tag_name: string;
+  assets: ReleaseAsset[];
+  html_url: string;
+}
+
+// Fetch latest release at build time so Download buttons resolve to direct
+// asset URLs (browser auto-downloads on click). Falls back to releases page
+// if the API call fails or no matching asset is found for a platform.
+let release: Release | null = null;
+try {
+  const r = await fetch("https://api.github.com/repos/StephenSHorton/aizuchi/releases/latest", {
+    headers: { Accept: "application/vnd.github+json" },
+  });
+  if (r.ok) release = (await r.json()) as Release;
+} catch {
+  // network failure → fall through to releasesUrl fallback
+}
+
+const version = release?.tag_name?.replace(/^v/, "") ?? "";
+const findAsset = (...patterns: RegExp[]): string => {
+  if (!release) return releasesUrl;
+  for (const pattern of patterns) {
+    const asset = release.assets.find((a) => pattern.test(a.name));
+    if (asset) return asset.browser_download_url;
+  }
+  return releasesUrl;
+};
+const formatSize = (url: string): string => {
+  if (!release) return "";
+  const asset = release.assets.find((a) => a.browser_download_url === url);
+  if (!asset) return "";
+  const mb = asset.size / (1024 * 1024);
+  return mb >= 1 ? `${mb.toFixed(1)} MB` : `${(asset.size / 1024).toFixed(0)} KB`;
+};
+
 const platforms = [
   {
     name: "macOS",
     tagline: "Apple Silicon and Intel",
-    files: "Aizuchi_<version>_aarch64.dmg · Aizuchi_<version>_x64.dmg",
+    primary: { label: "Apple Silicon", url: findAsset(/_aarch64\.dmg$/i) },
+    alts: [{ label: "Intel", url: findAsset(/_x64\.dmg$/i, /_universal\.dmg$/i) }],
     note: 'After install, run <code class="rounded bg-slate-900/[0.06] px-1.5 py-0.5 font-mono text-[0.8em] text-slate-700 dark:bg-white/[0.08] dark:text-slate-200">xattr -cr /Applications/Aizuchi.app</code> in Terminal to clear macOS quarantine. The app is currently unsigned — Apple code signing is on the roadmap.',
   },
   {
     name: "Windows",
     tagline: "x86_64",
-    files: "Aizuchi_<version>_x64-setup.exe · Aizuchi_<version>_x64_en-US.msi",
-    note: "SmartScreen may flag the unsigned installer — click \"More info\" then \"Run anyway\". Code signing certificate is on the roadmap.",
+    primary: { label: "Installer (.exe)", url: findAsset(/_x64-setup\.exe$/i, /-setup\.exe$/i) },
+    alts: [{ label: "MSI", url: findAsset(/\.msi$/i) }],
+    note: 'SmartScreen may flag the unsigned installer — click "More info" then "Run anyway". Code signing certificate is on the roadmap.',
   },
   {
     name: "Linux",
     tagline: "x86_64 — Debian / Fedora / portable",
-    files: "Aizuchi_<version>_amd64.deb · Aizuchi-<version>-1.x86_64.rpm · Aizuchi_<version>_amd64.AppImage",
+    primary: { label: "Debian (.deb)", url: findAsset(/\.deb$/i) },
+    alts: [
+      { label: "Fedora (.rpm)", url: findAsset(/\.rpm$/i) },
+      { label: "AppImage", url: findAsset(/\.AppImage$/i) },
+    ],
     note: "AppImage is portable — chmod +x the file and run. No quarantine workaround needed.",
   },
 ];
@@ -102,34 +149,47 @@ const platforms = [
                 <div class="flex-1">
                   <h2 class="text-lg font-semibold text-slate-900 dark:text-white">{p.name}</h2>
                   <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">{p.tagline}</p>
-                  <p class="mt-5 font-mono text-[11px] leading-relaxed break-all text-slate-400 dark:text-slate-500">
-                    {p.files}
-                  </p>
                   <p
                     class="mt-5 text-xs leading-relaxed text-slate-600 dark:text-slate-400"
                     set:html={p.note}
                   />
                 </div>
                 <a
-                  href={releasesUrl}
-                  target="_blank"
-                  rel="noreferrer noopener"
+                  href={p.primary.url}
                   class="mt-8 inline-flex w-full items-center justify-center gap-x-2 self-start rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-deep md:w-auto dark:bg-brand-light dark:text-slate-950 dark:hover:bg-brand"
                 >
                   <svg viewBox="0 0 20 20" aria-hidden="true" class="h-4 w-4 fill-current">
                     <path d="M10 2a.75.75 0 0 1 .75.75v8.69l3.22-3.22a.75.75 0 1 1 1.06 1.06l-4.5 4.5a.75.75 0 0 1-1.06 0l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.22 3.22V2.75A.75.75 0 0 1 10 2Z" />
                     <path d="M3.5 13.75a.75.75 0 0 1 .75.75v1.5c0 .138.112.25.25.25h11a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 15.5 17.75h-11A1.75 1.75 0 0 1 2.75 16v-1.5a.75.75 0 0 1 .75-.75Z" />
                   </svg>
-                  Download for {p.name}
+                  {p.primary.label}
+                  {formatSize(p.primary.url) && (
+                    <span class="text-xs font-normal opacity-70">· {formatSize(p.primary.url)}</span>
+                  )}
                 </a>
+                {p.alts.length > 0 && (
+                  <p class="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+                    <span>Also:</span>
+                    {p.alts.map((alt) => (
+                      <a
+                        href={alt.url}
+                        class="font-medium text-slate-700 underline underline-offset-2 hover:text-brand dark:text-slate-300 dark:hover:text-brand-light"
+                      >
+                        {alt.label}
+                      </a>
+                    ))}
+                  </p>
+                )}
               </div>
             ))
           }
         </div>
-        <p class="mt-6 text-center text-xs text-slate-400 dark:text-slate-500">
-          Each button takes you to the latest GitHub release. Pick the asset that matches the
-          file pattern shown above your platform.
-        </p>
+        {version && (
+          <p class="mt-6 text-center text-xs text-slate-400 dark:text-slate-500">
+            Latest release: <a href={release?.html_url ?? releasesUrl} target="_blank" rel="noreferrer noopener" class="font-medium text-slate-600 underline underline-offset-2 hover:text-brand dark:text-slate-400 dark:hover:text-brand-light">v{version}</a>
+            {" · "}<a href={`${githubUrl}/releases`} target="_blank" rel="noreferrer noopener" class="font-medium text-slate-600 underline underline-offset-2 hover:text-brand dark:text-slate-400 dark:hover:text-brand-light">all releases</a>
+          </p>
+        )}
       </div>
     </section>
 
