@@ -1,0 +1,176 @@
+---
+import Base from "../layouts/Base.astro";
+import Logo from "../components/Logo.astro";
+import MindmapPlaceholder from "../components/MindmapPlaceholder.astro";
+
+const githubUrl = "https://github.com/StephenSHorton/aizuchi";
+---
+
+<Base>
+  <div class="relative isolate overflow-hidden">
+    <!-- Top gradient blob -->
+    <div
+      aria-hidden="true"
+      class="pointer-events-none absolute inset-x-0 -top-40 -z-10 transform-gpu overflow-hidden blur-3xl sm:-top-80"
+    >
+      <div
+        style="clip-path: polygon(74.1% 44.1%, 100% 61.6%, 97.5% 26.9%, 85.5% 0.1%, 80.7% 2%, 72.5% 32.5%, 60.2% 62.4%, 52.4% 68.1%, 47.5% 58.3%, 45.2% 34.5%, 27.5% 76.7%, 0.1% 64.9%, 17.9% 100%, 27.6% 76.8%, 76.1% 97.7%, 74.1% 44.1%);"
+        class="relative left-[calc(50%-11rem)] aspect-[1155/678] w-[36.125rem] -translate-x-1/2 rotate-[28deg] bg-linear-to-tr from-sky-300 to-indigo-500 opacity-25 sm:left-[calc(50%-30rem)] sm:w-[72.1875rem] dark:from-sky-500 dark:to-indigo-600 dark:opacity-20"
+      >
+      </div>
+    </div>
+
+    <!-- Header -->
+    <header class="absolute inset-x-0 top-0 z-50">
+      <nav class="mx-auto flex max-w-7xl items-center justify-between px-6 py-5 lg:px-8" aria-label="Primary">
+        <a href="/" class="-m-1.5 inline-flex items-center p-1.5 text-slate-900 dark:text-white">
+          <span class="sr-only">Aizuchi</span>
+          <Logo withWordmark />
+        </a>
+        <div class="flex items-center gap-x-6">
+          <a
+            href={githubUrl}
+            target="_blank"
+            rel="noreferrer noopener"
+            class="inline-flex items-center gap-x-1.5 text-sm/6 font-semibold text-slate-700 transition-colors hover:text-slate-900 dark:text-slate-200 dark:hover:text-white"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" class="h-4 w-4 fill-current">
+              <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56 0-.27-.01-1-.02-1.97-3.2.69-3.87-1.54-3.87-1.54-.52-1.33-1.27-1.69-1.27-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.74 2.68 1.24 3.34.95.1-.74.4-1.24.72-1.53-2.55-.29-5.24-1.27-5.24-5.65 0-1.25.45-2.27 1.18-3.07-.12-.29-.51-1.46.11-3.04 0 0 .96-.31 3.15 1.17a10.94 10.94 0 0 1 5.74 0c2.19-1.48 3.15-1.17 3.15-1.17.62 1.58.23 2.75.11 3.04.74.8 1.18 1.82 1.18 3.07 0 4.39-2.7 5.36-5.27 5.64.41.36.78 1.06.78 2.13 0 1.54-.01 2.79-.01 3.17 0 .31.21.67.8.56C20.22 21.39 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5Z"></path>
+            </svg>
+            <span>GitHub</span>
+          </a>
+        </div>
+      </nav>
+    </header>
+
+    <!-- Hero -->
+    <section class="relative pt-14">
+      <div class="px-6 pt-24 pb-20 sm:pt-32 lg:px-8 lg:pt-40 lg:pb-28">
+        <div class="mx-auto max-w-3xl text-center">
+          <p class="mb-6 inline-flex items-center gap-x-2 rounded-full bg-slate-900/[0.04] px-3 py-1 text-xs font-medium tracking-wide text-slate-700 ring-1 ring-slate-900/10 ring-inset dark:bg-white/[0.06] dark:text-slate-200 dark:ring-white/10">
+            <span class="h-1.5 w-1.5 rounded-full bg-indigo-500 dark:bg-indigo-400"></span>
+            Early access — open source
+          </p>
+          <h1 class="text-4xl font-semibold tracking-tight text-balance text-slate-900 sm:text-5xl lg:text-6xl dark:text-white">
+            An AI that listens alongside you.
+            <span class="block text-indigo-600 dark:text-indigo-300/90">
+              The mind-map is how it shows it's following.
+            </span>
+          </h1>
+          <p class="mx-auto mt-7 max-w-2xl text-base leading-relaxed text-pretty text-slate-600 sm:text-lg dark:text-slate-400">
+            Aizuchi builds a live mind-map of your meeting as the conversation unfolds —
+            realtime synthesis during the meeting, not a post-hoc transcript like
+            Granola, Otter, or tldv.
+          </p>
+          <div class="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row sm:gap-4">
+            <a
+              href={githubUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+              class="inline-flex items-center gap-x-2 rounded-md bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm ring-1 ring-slate-900/10 ring-inset transition-colors hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:ring-white/20 dark:hover:bg-slate-100"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true" class="h-4 w-4 fill-current">
+                <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56 0-.27-.01-1-.02-1.97-3.2.69-3.87-1.54-3.87-1.54-.52-1.33-1.27-1.69-1.27-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.74 2.68 1.24 3.34.95.1-.74.4-1.24.72-1.53-2.55-.29-5.24-1.27-5.24-5.65 0-1.25.45-2.27 1.18-3.07-.12-.29-.51-1.46.11-3.04 0 0 .96-.31 3.15 1.17a10.94 10.94 0 0 1 5.74 0c2.19-1.48 3.15-1.17 3.15-1.17.62 1.58.23 2.75.11 3.04.74.8 1.18 1.82 1.18 3.07 0 4.39-2.7 5.36-5.27 5.64.41.36.78 1.06.78 2.13 0 1.54-.01 2.79-.01 3.17 0 .31.21.67.8.56C20.22 21.39 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5Z"></path>
+              </svg>
+              View on GitHub
+            </a>
+            <a
+              href="#how-it-works"
+              class="inline-flex items-center gap-x-1 rounded-md px-3 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"
+            >
+              How it works
+              <span aria-hidden="true">→</span>
+            </a>
+          </div>
+        </div>
+
+        <div class="mx-auto mt-16 max-w-6xl sm:mt-20 lg:mt-24">
+          <div class="rounded-xl bg-slate-900/5 p-2 ring-1 ring-slate-900/10 ring-inset lg:rounded-2xl lg:p-3 dark:bg-white/5 dark:ring-white/10">
+            <div class="overflow-hidden rounded-lg shadow-2xl shadow-slate-900/20 dark:shadow-black/40">
+              <MindmapPlaceholder />
+            </div>
+          </div>
+          <p class="mt-3 text-center text-xs text-slate-400 dark:text-slate-500">
+            Preview — actual product screenshot coming soon
+          </p>
+        </div>
+      </div>
+
+      <!-- Bottom gradient blob -->
+      <div
+        aria-hidden="true"
+        class="pointer-events-none absolute inset-x-0 top-[calc(100%-22rem)] -z-10 transform-gpu overflow-hidden blur-3xl sm:top-[calc(100%-30rem)]"
+      >
+        <div
+          style="clip-path: polygon(74.1% 44.1%, 100% 61.6%, 97.5% 26.9%, 85.5% 0.1%, 80.7% 2%, 72.5% 32.5%, 60.2% 62.4%, 52.4% 68.1%, 47.5% 58.3%, 45.2% 34.5%, 27.5% 76.7%, 0.1% 64.9%, 17.9% 100%, 27.6% 76.8%, 76.1% 97.7%, 74.1% 44.1%);"
+          class="relative left-[calc(50%+3rem)] aspect-[1155/678] w-[36.125rem] -translate-x-1/2 bg-linear-to-tr from-indigo-400 to-violet-500 opacity-20 sm:left-[calc(50%+36rem)] sm:w-[72.1875rem] dark:from-indigo-600 dark:to-violet-700 dark:opacity-15"
+        >
+        </div>
+      </div>
+    </section>
+
+    <!-- "What it is" / How it works -->
+    <section id="how-it-works" class="relative px-6 py-20 sm:py-24 lg:px-8 lg:py-28">
+      <div class="mx-auto max-w-3xl">
+        <h2 class="text-2xl font-semibold tracking-tight text-balance text-slate-900 sm:text-3xl dark:text-white">
+          A third participant whose job is synthesis.
+        </h2>
+        <div class="mt-6 space-y-5 text-base leading-relaxed text-slate-600 sm:text-lg dark:text-slate-400">
+          <p>
+            In most meetings, no one is actively synthesizing the conversation while it happens.
+            Humans can't take notes and participate at full capacity at the same time. Aizuchi is
+            the participant whose only job is exactly that — rendered visibly, so everyone in the
+            room can see, correct, and build on the shared understanding live.
+          </p>
+          <p>
+            <em class="not-italic font-medium text-slate-800 dark:text-slate-200">Aizuchi</em>
+            (相槌) — the listener's backchanneling that signals "I'm following you."
+            That's the product. The mind-map is how the AI does it.
+          </p>
+        </div>
+
+        <dl class="mt-12 grid grid-cols-1 gap-x-8 gap-y-6 sm:grid-cols-3">
+          <div class="border-l border-slate-200 pl-5 dark:border-white/10">
+            <dt class="text-sm font-semibold text-slate-900 dark:text-white">Realtime</dt>
+            <dd class="mt-1 text-sm text-slate-600 dark:text-slate-400">
+              Synthesis as you speak — not after.
+            </dd>
+          </div>
+          <div class="border-l border-slate-200 pl-5 dark:border-white/10">
+            <dt class="text-sm font-semibold text-slate-900 dark:text-white">Local-first</dt>
+            <dd class="mt-1 text-sm text-slate-600 dark:text-slate-400">
+              On-device transcription. Your conversation stays yours.
+            </dd>
+          </div>
+          <div class="border-l border-slate-200 pl-5 dark:border-white/10">
+            <dt class="text-sm font-semibold text-slate-900 dark:text-white">Bring your own AI</dt>
+            <dd class="mt-1 text-sm text-slate-600 dark:text-slate-400">
+              Plug in any model. Local Gemma, Claude, whatever fits.
+            </dd>
+          </div>
+        </dl>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-200/70 px-6 py-10 lg:px-8 dark:border-white/10">
+      <div class="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 sm:flex-row">
+        <div class="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-500">
+          <Logo class="h-4 w-auto text-slate-400 dark:text-slate-600" />
+          <span>&copy; 2026 Aizuchi</span>
+        </div>
+        <a
+          href={githubUrl}
+          target="_blank"
+          rel="noreferrer noopener"
+          class="inline-flex items-center gap-x-1.5 text-sm text-slate-500 transition-colors hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" class="h-4 w-4 fill-current">
+            <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56 0-.27-.01-1-.02-1.97-3.2.69-3.87-1.54-3.87-1.54-.52-1.33-1.27-1.69-1.27-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.74 2.68 1.24 3.34.95.1-.74.4-1.24.72-1.53-2.55-.29-5.24-1.27-5.24-5.65 0-1.25.45-2.27 1.18-3.07-.12-.29-.51-1.46.11-3.04 0 0 .96-.31 3.15 1.17a10.94 10.94 0 0 1 5.74 0c2.19-1.48 3.15-1.17 3.15-1.17.62 1.58.23 2.75.11 3.04.74.8 1.18 1.82 1.18 3.07 0 4.39-2.7 5.36-5.27 5.64.41.36.78 1.06.78 2.13 0 1.54-.01 2.79-.01 3.17 0 .31.21.67.8.56C20.22 21.39 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5Z"></path>
+          </svg>
+          <span>StephenSHorton/aizuchi</span>
+        </a>
+      </div>
+    </footer>
+  </div>
+</Base>
