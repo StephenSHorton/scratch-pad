@@ -15,18 +15,32 @@ const githubUrl = "https://github.com/StephenSHorton/aizuchi";
     >
       <div
         style="clip-path: polygon(74.1% 44.1%, 100% 61.6%, 97.5% 26.9%, 85.5% 0.1%, 80.7% 2%, 72.5% 32.5%, 60.2% 62.4%, 52.4% 68.1%, 47.5% 58.3%, 45.2% 34.5%, 27.5% 76.7%, 0.1% 64.9%, 17.9% 100%, 27.6% 76.8%, 76.1% 97.7%, 74.1% 44.1%);"
-        class="relative left-[calc(50%-11rem)] aspect-[1155/678] w-[36.125rem] -translate-x-1/2 rotate-[28deg] bg-linear-to-tr from-sky-300 to-indigo-500 opacity-25 sm:left-[calc(50%-30rem)] sm:w-[72.1875rem] dark:from-sky-500 dark:to-indigo-600 dark:opacity-20"
+        class="relative left-[calc(50%-11rem)] aspect-[1155/678] w-[36.125rem] -translate-x-1/2 rotate-[28deg] bg-linear-to-tr from-brand-soft to-brand opacity-30 sm:left-[calc(50%-30rem)] sm:w-[72.1875rem] dark:from-brand-light dark:to-brand dark:opacity-25"
       >
       </div>
     </div>
 
     <!-- Header -->
     <header class="absolute inset-x-0 top-0 z-50">
-      <nav class="mx-auto flex max-w-7xl items-center justify-between px-6 py-5 lg:px-8" aria-label="Primary">
+      <nav class="relative mx-auto flex max-w-7xl items-center justify-between px-6 py-5 lg:px-8" aria-label="Primary">
         <a href="/" class="-m-1.5 inline-flex items-center p-1.5 text-slate-900 dark:text-white">
           <span class="sr-only">Aizuchi</span>
           <Logo withWordmark />
         </a>
+        <span
+          aria-hidden="true"
+          class="group absolute left-1/2 grid -translate-x-1/2 cursor-default place-items-center text-sm font-medium text-slate-500 select-none dark:text-slate-400"
+        >
+          <span
+            lang="ja"
+            class="col-start-1 row-start-1 tracking-[0.15em] transition-all duration-500 ease-out group-hover:scale-95 group-hover:opacity-0 group-hover:blur-md"
+            >相槌</span
+          >
+          <span
+            class="col-start-1 row-start-1 scale-95 opacity-0 blur-md transition-all duration-500 ease-out group-hover:scale-100 group-hover:opacity-100 group-hover:blur-none"
+            >aizuchi</span
+          >
+        </span>
         <div class="flex items-center gap-x-6">
           <a
             href={githubUrl}
@@ -48,12 +62,12 @@ const githubUrl = "https://github.com/StephenSHorton/aizuchi";
       <div class="px-6 pt-24 pb-20 sm:pt-32 lg:px-8 lg:pt-40 lg:pb-28">
         <div class="mx-auto max-w-3xl text-center">
           <p class="mb-6 inline-flex items-center gap-x-2 rounded-full bg-slate-900/[0.04] px-3 py-1 text-xs font-medium tracking-wide text-slate-700 ring-1 ring-slate-900/10 ring-inset dark:bg-white/[0.06] dark:text-slate-200 dark:ring-white/10">
-            <span class="h-1.5 w-1.5 rounded-full bg-indigo-500 dark:bg-indigo-400"></span>
+            <span class="h-1.5 w-1.5 rounded-full bg-brand dark:bg-brand-light"></span>
             Early access — open source
           </p>
           <h1 class="text-4xl font-semibold tracking-tight text-balance text-slate-900 sm:text-5xl lg:text-6xl dark:text-white">
             An AI that listens alongside you.
-            <span class="block text-indigo-600 dark:text-indigo-300/90">
+            <span class="block text-brand dark:text-brand-light">
               The mind-map is how it shows it's following.
             </span>
           </h1>
@@ -64,22 +78,25 @@ const githubUrl = "https://github.com/StephenSHorton/aizuchi";
           </p>
           <div class="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row sm:gap-4">
             <a
+              href="/download"
+              class="inline-flex items-center gap-x-2 rounded-md bg-brand px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-deep dark:bg-brand-light dark:text-slate-950 dark:hover:bg-brand"
+            >
+              <svg viewBox="0 0 20 20" aria-hidden="true" class="h-4 w-4 fill-current">
+                <path d="M10 2a.75.75 0 0 1 .75.75v8.69l3.22-3.22a.75.75 0 1 1 1.06 1.06l-4.5 4.5a.75.75 0 0 1-1.06 0l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.22 3.22V2.75A.75.75 0 0 1 10 2Z"></path>
+                <path d="M3.5 13.75a.75.75 0 0 1 .75.75v1.5c0 .138.112.25.25.25h11a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 15.5 17.75h-11A1.75 1.75 0 0 1 2.75 16v-1.5a.75.75 0 0 1 .75-.75Z"></path>
+              </svg>
+              Download
+            </a>
+            <a
               href={githubUrl}
               target="_blank"
               rel="noreferrer noopener"
-              class="inline-flex items-center gap-x-2 rounded-md bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm ring-1 ring-slate-900/10 ring-inset transition-colors hover:bg-slate-800 dark:bg-white dark:text-slate-900 dark:ring-white/20 dark:hover:bg-slate-100"
+              class="inline-flex items-center gap-x-1.5 rounded-md px-3 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"
             >
               <svg viewBox="0 0 24 24" aria-hidden="true" class="h-4 w-4 fill-current">
                 <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56 0-.27-.01-1-.02-1.97-3.2.69-3.87-1.54-3.87-1.54-.52-1.33-1.27-1.69-1.27-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.74 2.68 1.24 3.34.95.1-.74.4-1.24.72-1.53-2.55-.29-5.24-1.27-5.24-5.65 0-1.25.45-2.27 1.18-3.07-.12-.29-.51-1.46.11-3.04 0 0 .96-.31 3.15 1.17a10.94 10.94 0 0 1 5.74 0c2.19-1.48 3.15-1.17 3.15-1.17.62 1.58.23 2.75.11 3.04.74.8 1.18 1.82 1.18 3.07 0 4.39-2.7 5.36-5.27 5.64.41.36.78 1.06.78 2.13 0 1.54-.01 2.79-.01 3.17 0 .31.21.67.8.56C20.22 21.39 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5Z"></path>
               </svg>
               View on GitHub
-            </a>
-            <a
-              href="#how-it-works"
-              class="inline-flex items-center gap-x-1 rounded-md px-3 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"
-            >
-              How it works
-              <span aria-hidden="true">→</span>
             </a>
           </div>
         </div>
@@ -103,7 +120,7 @@ const githubUrl = "https://github.com/StephenSHorton/aizuchi";
       >
         <div
           style="clip-path: polygon(74.1% 44.1%, 100% 61.6%, 97.5% 26.9%, 85.5% 0.1%, 80.7% 2%, 72.5% 32.5%, 60.2% 62.4%, 52.4% 68.1%, 47.5% 58.3%, 45.2% 34.5%, 27.5% 76.7%, 0.1% 64.9%, 17.9% 100%, 27.6% 76.8%, 76.1% 97.7%, 74.1% 44.1%);"
-          class="relative left-[calc(50%+3rem)] aspect-[1155/678] w-[36.125rem] -translate-x-1/2 bg-linear-to-tr from-indigo-400 to-violet-500 opacity-20 sm:left-[calc(50%+36rem)] sm:w-[72.1875rem] dark:from-indigo-600 dark:to-violet-700 dark:opacity-15"
+          class="relative left-[calc(50%+3rem)] aspect-[1155/678] w-[36.125rem] -translate-x-1/2 bg-linear-to-tr from-brand-light to-brand-deep opacity-25 sm:left-[calc(50%+36rem)] sm:w-[72.1875rem] dark:from-brand dark:to-brand-deep dark:opacity-20"
         >
         </div>
       </div>

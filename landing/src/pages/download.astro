@@ -1,0 +1,201 @@
+---
+import Base from "../layouts/Base.astro";
+import Logo from "../components/Logo.astro";
+
+const githubUrl = "https://github.com/StephenSHorton/aizuchi";
+const releasesUrl = `${githubUrl}/releases/latest`;
+
+const platforms = [
+  {
+    name: "macOS",
+    tagline: "Apple Silicon and Intel",
+    files: "Aizuchi_<version>_aarch64.dmg · Aizuchi_<version>_x64.dmg",
+    note: 'After install, run <code class="rounded bg-slate-900/[0.06] px-1.5 py-0.5 font-mono text-[0.8em] text-slate-700 dark:bg-white/[0.08] dark:text-slate-200">xattr -cr /Applications/Aizuchi.app</code> in Terminal to clear macOS quarantine. The app is currently unsigned — Apple code signing is on the roadmap.',
+  },
+  {
+    name: "Windows",
+    tagline: "x86_64",
+    files: "Aizuchi_<version>_x64-setup.exe · Aizuchi_<version>_x64_en-US.msi",
+    note: "SmartScreen may flag the unsigned installer — click \"More info\" then \"Run anyway\". Code signing certificate is on the roadmap.",
+  },
+  {
+    name: "Linux",
+    tagline: "x86_64 — Debian / Fedora / portable",
+    files: "Aizuchi_<version>_amd64.deb · Aizuchi-<version>-1.x86_64.rpm · Aizuchi_<version>_amd64.AppImage",
+    note: "AppImage is portable — chmod +x the file and run. No quarantine workaround needed.",
+  },
+];
+---
+
+<Base
+  title="Download Aizuchi — for macOS, Windows, and Linux"
+  description="Download Aizuchi, the live mind-map meeting app. Free and open source. Available for macOS (Apple Silicon and Intel), Windows, and Linux."
+>
+  <div class="relative isolate overflow-hidden">
+    <!-- Top gradient blob -->
+    <div
+      aria-hidden="true"
+      class="pointer-events-none absolute inset-x-0 -top-40 -z-10 transform-gpu overflow-hidden blur-3xl sm:-top-80"
+    >
+      <div
+        style="clip-path: polygon(74.1% 44.1%, 100% 61.6%, 97.5% 26.9%, 85.5% 0.1%, 80.7% 2%, 72.5% 32.5%, 60.2% 62.4%, 52.4% 68.1%, 47.5% 58.3%, 45.2% 34.5%, 27.5% 76.7%, 0.1% 64.9%, 17.9% 100%, 27.6% 76.8%, 76.1% 97.7%, 74.1% 44.1%);"
+        class="relative left-[calc(50%-11rem)] aspect-[1155/678] w-[36.125rem] -translate-x-1/2 rotate-[28deg] bg-linear-to-tr from-brand-soft to-brand opacity-30 sm:left-[calc(50%-30rem)] sm:w-[72.1875rem] dark:from-brand-light dark:to-brand dark:opacity-25"
+      >
+      </div>
+    </div>
+
+    <!-- Header -->
+    <header class="absolute inset-x-0 top-0 z-50">
+      <nav class="relative mx-auto flex max-w-7xl items-center justify-between px-6 py-5 lg:px-8" aria-label="Primary">
+        <a href="/" class="-m-1.5 inline-flex items-center p-1.5 text-slate-900 dark:text-white">
+          <span class="sr-only">Aizuchi</span>
+          <Logo withWordmark />
+        </a>
+        <div class="flex items-center gap-x-6">
+          <a
+            href={githubUrl}
+            target="_blank"
+            rel="noreferrer noopener"
+            class="inline-flex items-center gap-x-1.5 text-sm/6 font-semibold text-slate-700 transition-colors hover:text-slate-900 dark:text-slate-200 dark:hover:text-white"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true" class="h-4 w-4 fill-current">
+              <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56 0-.27-.01-1-.02-1.97-3.2.69-3.87-1.54-3.87-1.54-.52-1.33-1.27-1.69-1.27-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.74 2.68 1.24 3.34.95.1-.74.4-1.24.72-1.53-2.55-.29-5.24-1.27-5.24-5.65 0-1.25.45-2.27 1.18-3.07-.12-.29-.51-1.46.11-3.04 0 0 .96-.31 3.15 1.17a10.94 10.94 0 0 1 5.74 0c2.19-1.48 3.15-1.17 3.15-1.17.62 1.58.23 2.75.11 3.04.74.8 1.18 1.82 1.18 3.07 0 4.39-2.7 5.36-5.27 5.64.41.36.78 1.06.78 2.13 0 1.54-.01 2.79-.01 3.17 0 .31.21.67.8.56C20.22 21.39 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5Z"></path>
+            </svg>
+            <span>GitHub</span>
+          </a>
+        </div>
+      </nav>
+    </header>
+
+    <!-- Hero -->
+    <section class="relative pt-14">
+      <div class="mx-auto max-w-4xl px-6 pt-24 pb-12 sm:pt-32 lg:px-8 lg:pt-40">
+        <div class="mx-auto max-w-3xl text-center">
+          <p
+            class="mb-6 inline-flex items-center gap-x-2 rounded-full bg-slate-900/[0.04] px-3 py-1 text-xs font-medium tracking-wide text-slate-700 ring-1 ring-slate-900/10 ring-inset dark:bg-white/[0.06] dark:text-slate-200 dark:ring-white/10"
+          >
+            <span class="h-1.5 w-1.5 rounded-full bg-brand dark:bg-brand-light"></span>
+            Free and open source · AGPL-3.0
+          </p>
+          <h1
+            class="text-4xl font-semibold tracking-tight text-balance text-slate-900 sm:text-5xl dark:text-white"
+          >
+            Download <span class="text-brand dark:text-brand-light">Aizuchi</span>
+          </h1>
+          <p
+            class="mx-auto mt-6 max-w-2xl text-base leading-relaxed text-pretty text-slate-600 sm:text-lg dark:text-slate-400"
+          >
+            Available for macOS, Windows, and Linux. Local-first — your conversation stays on
+            your machine.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Platform grid -->
+    <section class="relative px-6 pb-20 lg:px-8 lg:pb-24">
+      <div class="mx-auto max-w-6xl">
+        <div class="grid grid-cols-1 gap-6 md:grid-cols-3 md:gap-8">
+          {
+            platforms.map((p) => (
+              <div class="group flex flex-col rounded-2xl bg-white p-8 ring-1 ring-slate-900/10 transition-shadow hover:shadow-lg dark:bg-slate-900/40 dark:ring-white/10">
+                <div class="flex-1">
+                  <h2 class="text-lg font-semibold text-slate-900 dark:text-white">{p.name}</h2>
+                  <p class="mt-1 text-sm text-slate-500 dark:text-slate-400">{p.tagline}</p>
+                  <p class="mt-5 font-mono text-[11px] leading-relaxed break-all text-slate-400 dark:text-slate-500">
+                    {p.files}
+                  </p>
+                  <p
+                    class="mt-5 text-xs leading-relaxed text-slate-600 dark:text-slate-400"
+                    set:html={p.note}
+                  />
+                </div>
+                <a
+                  href={releasesUrl}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  class="mt-8 inline-flex w-full items-center justify-center gap-x-2 self-start rounded-md bg-brand px-4 py-2 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-deep md:w-auto dark:bg-brand-light dark:text-slate-950 dark:hover:bg-brand"
+                >
+                  <svg viewBox="0 0 20 20" aria-hidden="true" class="h-4 w-4 fill-current">
+                    <path d="M10 2a.75.75 0 0 1 .75.75v8.69l3.22-3.22a.75.75 0 1 1 1.06 1.06l-4.5 4.5a.75.75 0 0 1-1.06 0l-4.5-4.5a.75.75 0 0 1 1.06-1.06l3.22 3.22V2.75A.75.75 0 0 1 10 2Z" />
+                    <path d="M3.5 13.75a.75.75 0 0 1 .75.75v1.5c0 .138.112.25.25.25h11a.25.25 0 0 0 .25-.25v-1.5a.75.75 0 0 1 1.5 0v1.5A1.75 1.75 0 0 1 15.5 17.75h-11A1.75 1.75 0 0 1 2.75 16v-1.5a.75.75 0 0 1 .75-.75Z" />
+                  </svg>
+                  Download for {p.name}
+                </a>
+              </div>
+            ))
+          }
+        </div>
+        <p class="mt-6 text-center text-xs text-slate-400 dark:text-slate-500">
+          Each button takes you to the latest GitHub release. Pick the asset that matches the
+          file pattern shown above your platform.
+        </p>
+      </div>
+    </section>
+
+    <!-- What's bundled / Source / Updates -->
+    <section class="relative px-6 pb-20 lg:px-8 lg:pb-28">
+      <div class="mx-auto grid max-w-5xl grid-cols-1 gap-8 sm:grid-cols-3 sm:gap-x-10">
+        <div class="border-l border-slate-200 pl-5 dark:border-white/10">
+          <h3 class="text-sm font-semibold text-slate-900 dark:text-white">What's bundled</h3>
+          <p class="mt-2 text-sm text-slate-600 dark:text-slate-400">
+            Live mind-map meetings. Scratch-pad sticky notes. MCP server for Claude Code, all in
+            one app — no extra installs.
+          </p>
+        </div>
+        <div class="border-l border-slate-200 pl-5 dark:border-white/10">
+          <h3 class="text-sm font-semibold text-slate-900 dark:text-white">Auto-updates</h3>
+          <p class="mt-2 text-sm text-slate-600 dark:text-slate-400">
+            macOS and Windows update silently in the background via Tauri's signed updater.
+            Linux re-downloads the AppImage for now.
+          </p>
+        </div>
+        <div class="border-l border-slate-200 pl-5 dark:border-white/10">
+          <h3 class="text-sm font-semibold text-slate-900 dark:text-white">Open source</h3>
+          <p class="mt-2 text-sm text-slate-600 dark:text-slate-400">
+            Full source on
+            <a
+              href={githubUrl}
+              target="_blank"
+              rel="noreferrer noopener"
+              class="font-medium text-slate-900 underline underline-offset-2 hover:text-brand dark:text-white dark:hover:text-brand-light"
+            >GitHub</a>. AGPL-3.0 — fork it, run it on your hardware, contribute back.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Bottom gradient blob -->
+    <div
+      aria-hidden="true"
+      class="pointer-events-none absolute inset-x-0 top-[calc(100%-22rem)] -z-10 transform-gpu overflow-hidden blur-3xl sm:top-[calc(100%-30rem)]"
+    >
+      <div
+        style="clip-path: polygon(74.1% 44.1%, 100% 61.6%, 97.5% 26.9%, 85.5% 0.1%, 80.7% 2%, 72.5% 32.5%, 60.2% 62.4%, 52.4% 68.1%, 47.5% 58.3%, 45.2% 34.5%, 27.5% 76.7%, 0.1% 64.9%, 17.9% 100%, 27.6% 76.8%, 76.1% 97.7%, 74.1% 44.1%);"
+        class="relative left-[calc(50%+3rem)] aspect-[1155/678] w-[36.125rem] -translate-x-1/2 bg-linear-to-tr from-brand-light to-brand-deep opacity-25 sm:left-[calc(50%+36rem)] sm:w-[72.1875rem] dark:from-brand dark:to-brand-deep dark:opacity-20"
+      >
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-200/70 px-6 py-10 lg:px-8 dark:border-white/10">
+      <div class="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 sm:flex-row">
+        <div class="flex items-center gap-2 text-sm text-slate-500 dark:text-slate-500">
+          <Logo class="h-4 w-auto text-slate-400 dark:text-slate-600" />
+          <span>&copy; 2026 Aizuchi</span>
+        </div>
+        <a
+          href={githubUrl}
+          target="_blank"
+          rel="noreferrer noopener"
+          class="inline-flex items-center gap-x-1.5 text-sm text-slate-500 transition-colors hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true" class="h-4 w-4 fill-current">
+            <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.1.79-.25.79-.56 0-.27-.01-1-.02-1.97-3.2.69-3.87-1.54-3.87-1.54-.52-1.33-1.27-1.69-1.27-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.74 2.68 1.24 3.34.95.1-.74.4-1.24.72-1.53-2.55-.29-5.24-1.27-5.24-5.65 0-1.25.45-2.27 1.18-3.07-.12-.29-.51-1.46.11-3.04 0 0 .96-.31 3.15 1.17a10.94 10.94 0 0 1 5.74 0c2.19-1.48 3.15-1.17 3.15-1.17.62 1.58.23 2.75.11 3.04.74.8 1.18 1.82 1.18 3.07 0 4.39-2.7 5.36-5.27 5.64.41.36.78 1.06.78 2.13 0 1.54-.01 2.79-.01 3.17 0 .31.21.67.8.56C20.22 21.39 23.5 17.08 23.5 12 23.5 5.65 18.35.5 12 .5Z"></path>
+          </svg>
+          <span>StephenSHorton/aizuchi</span>
+        </a>
+      </div>
+    </footer>
+  </div>
+</Base>
