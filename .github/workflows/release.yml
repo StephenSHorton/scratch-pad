@@ -73,7 +73,8 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            libasound2-dev
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
