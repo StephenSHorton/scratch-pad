@@ -319,21 +319,20 @@ pub fn transcribe_file(
         .full(params, &samples)
         .map_err(|e| format!("Whisper inference failed: {e}"))?;
 
-    let n = state
-        .full_n_segments()
-        .map_err(|e| format!("Failed to read segment count: {e}"))?;
+    let n = state.full_n_segments();
     let mut segments = Vec::with_capacity(n as usize);
     let mut speaker_idx: usize = 0;
     for i in 0..n {
-        let text = state
-            .full_get_segment_text(i)
-            .map_err(|e| format!("Failed to read segment {i}: {e}"))?;
-        let t0 = state
-            .full_get_segment_t0(i)
-            .map_err(|e| format!("Failed to read segment {i} t0: {e}"))?;
-        let t1 = state
-            .full_get_segment_t1(i)
-            .map_err(|e| format!("Failed to read segment {i} t1: {e}"))?;
+        let segment = state
+            .get_segment(i)
+            .ok_or_else(|| format!("Failed to read segment {i}"))?;
+        let text = segment
+            .to_str()
+            .map_err(|e| format!("Failed to read segment {i} text: {e}"))?
+            .to_string();
+        let t0 = segment.start_timestamp();
+        let t1 = segment.end_timestamp();
+        let turn_next = segment.next_segment_speaker_turn();
         let speaker = speaker_label(speaker_idx);
         // whisper.cpp returns timestamps in 10ms units
         segments.push(TranscriptSegment {
@@ -342,7 +341,7 @@ pub fn transcribe_file(
             end_ms: t1 * 10,
             speaker,
         });
-        if state.full_get_segment_speaker_turn_next(i) {
+        if turn_next {
             speaker_idx = speaker_idx.wrapping_add(1);
         }
     }
@@ -590,17 +589,21 @@ where
                 continue;
             }
 
-            let n = state.full_n_segments().unwrap_or(0);
+            let n = state.full_n_segments();
             let window_offset_ms =
                 session_start.elapsed().as_millis() as i64
                     - ((window_samples as i64) * 1000 / (sample_rate as i64));
             let mut window_turns = 0usize;
             for i in 0..n {
-                let text = match state.full_get_segment_text(i) {
+                let segment = match state.get_segment(i) {
+                    Some(s) => s,
+                    None => continue,
+                };
+                let text = match segment.to_str() {
                     Ok(t) => t.trim().to_string(),
                     Err(_) => continue,
                 };
-                let turn_next = state.full_get_segment_speaker_turn_next(i);
+                let turn_next = segment.next_segment_speaker_turn();
                 if turn_next {
                     window_turns += 1;
                 }
@@ -610,8 +613,8 @@ where
                     }
                     continue;
                 }
-                let t0 = state.full_get_segment_t0(i).unwrap_or(0) * 10;
-                let t1 = state.full_get_segment_t1(i).unwrap_or(0) * 10;
+                let t0 = segment.start_timestamp() * 10;
+                let t1 = segment.end_timestamp() * 10;
                 on_segment(TranscriptSegment {
                     text,
                     start_ms: window_offset_ms + t0,
