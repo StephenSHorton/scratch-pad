@@ -115,6 +115,17 @@ export interface ImportMeetingResponse {
 	sourceFile: string;
 }
 
+/**
+ * AIZ-31 — audio/video import. Takes an absolute path because media
+ * files routinely exceed the IPC body limit; the CLI is localhost-only
+ * so there's no sandbox crossing. Supported extensions: .wav, .mp3,
+ * .m4a, .flac, .mp4, .mov. Video files are decoded for their audio
+ * track; the video stream is ignored.
+ */
+export interface ImportAudioMeetingInput {
+	path: string;
+}
+
 // ---------- Discovery ----------
 
 export interface IpcConfig {

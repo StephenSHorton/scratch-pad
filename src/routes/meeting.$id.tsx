@@ -15,7 +15,7 @@ import { LiveTranscript } from "@/components/aizuchi/LiveTranscript";
 import { MeetingStatusPanel } from "@/components/aizuchi/MeetingStatusPanel";
 import { useCommandPaletteHotkey } from "@/hooks/useCommandPaletteHotkey";
 import { useMeetingSession } from "@/hooks/useMeetingSession";
-import type { ExtractionMode } from "@/lib/aizuchi/persistence";
+import type { ExtractionMode, MeetingSource } from "@/lib/aizuchi/persistence";
 import type {
 	Edge as AzEdge,
 	Node as AzNode,
@@ -118,6 +118,7 @@ function MeetingPrototype() {
 					chunks: TranscriptChunk[];
 					sourceFile: string;
 					extractionMode: ExtractionMode;
+					source: MeetingSource;
 				} | null>("take_pending_import", { id })
 					.then((pending) => {
 						if (!pending) {
@@ -130,6 +131,7 @@ function MeetingPrototype() {
 							pending.chunks,
 							pending.sourceFile,
 							pending.extractionMode,
+							pending.source,
 						);
 					})
 					.catch((err) => {

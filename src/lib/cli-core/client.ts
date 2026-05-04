@@ -17,6 +17,7 @@ import { AppNotRunningError, errorFromServer, IpcClientError } from "./errors";
 import type {
 	AppStatus,
 	CreatePadInput,
+	ImportAudioMeetingInput,
 	ImportMeetingInput,
 	ImportMeetingResponse,
 	IpcConfig,
@@ -212,6 +213,20 @@ export class AizuchiClient {
 
 	importMeeting(input: ImportMeetingInput): Promise<ImportMeetingResponse> {
 		return this.request<ImportMeetingResponse>("/meetings/import", {
+			method: "POST",
+			body: input,
+		});
+	}
+
+	/**
+	 * AIZ-31 — offline audio import. The IPC server runs whisper +
+	 * tinydiarize on the file synchronously, so this request can take
+	 * tens of seconds for a multi-minute clip on Apple Silicon.
+	 */
+	importAudioMeeting(
+		input: ImportAudioMeetingInput,
+	): Promise<ImportMeetingResponse> {
+		return this.request<ImportMeetingResponse>("/meetings/import-audio", {
 			method: "POST",
 			body: input,
 		});

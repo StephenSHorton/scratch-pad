@@ -47,6 +47,16 @@ pub enum ExtractionMode {
     Substance,
 }
 
+/// AIZ-30/AIZ-31 — origin tag for offline-mode meetings. Mirrors the
+/// frontend `MeetingSource` union; the snapshot's `source` field uses the
+/// same string values.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum MeetingSource {
+    TranscriptImport,
+    AudioImport,
+}
+
 /// AIZ-32 — auto-select rule. Distinct named speakers (excluding the
 /// `unknown` placeholder) drive the choice: 2+ → attribution, otherwise
 /// substance. Mixed labeled + unknown still resolves through this counter,
@@ -67,14 +77,18 @@ pub fn compute_extraction_mode(chunks: &[ImportedChunk]) -> ExtractionMode {
     }
 }
 
-/// Transcript chunks + originating filename, staged by `POST /v1/meetings/import`
-/// awaiting pickup by the freshly-opened meeting window. Cleared on first read.
+/// Transcript chunks + originating filename, staged by the import
+/// endpoints awaiting pickup by the freshly-opened meeting window.
+/// Cleared on first read.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingImport {
     pub chunks: Vec<ImportedChunk>,
     pub source_file: String,
     pub extraction_mode: ExtractionMode,
+    /// AIZ-31 — distinguishes transcript-file imports from audio-file imports
+    /// so the saved snapshot can carry the right `source` tag.
+    pub source: MeetingSource,
 }
 
 /// Tauri-managed state. Both the IPC import handler (which writes) and the
@@ -85,8 +99,8 @@ pub struct PendingImportsState {
     pub map: Mutex<HashMap<String, PendingImport>>,
 }
 
-/// Returned by `stage_pending_import` — what the IPC import endpoint and
-/// the path-based Tauri command both surface to the caller.
+/// Returned by the staging functions — what the IPC import endpoints and
+/// the path-based Tauri commands surface to the caller.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StagedImport {
@@ -94,6 +108,57 @@ pub struct StagedImport {
     pub chunk_count: usize,
     pub source_file: String,
     pub extraction_mode: ExtractionMode,
+    pub source: MeetingSource,
+}
+
+/// Insert a fully-built `PendingImport` into the managed state and open
+/// the meeting window with `?autostart=import`. Shared between the
+/// transcript-import path (which parses text) and the audio-import path
+/// (which transcribes via whisper). Returns the `StagedImport` envelope
+/// the IPC handlers respond with.
+pub fn stage_chunks(
+    app: &tauri::AppHandle,
+    chunks: Vec<ImportedChunk>,
+    source_file: String,
+    extraction_mode: ExtractionMode,
+    source: MeetingSource,
+) -> Result<StagedImport, String> {
+    use tauri::Manager;
+
+    if chunks.is_empty() {
+        return Err("No chunks to stage".into());
+    }
+    let chunk_count = chunks.len();
+    let id = format!("meeting-{}", uuid::Uuid::new_v4());
+    crate::log(&format!(
+        "[import] stage_chunks: {chunk_count} chunks from {source_file}, mode={extraction_mode:?}, source={source:?}, id={id}"
+    ));
+    {
+        let state = app.state::<PendingImportsState>();
+        let mut map = state
+            .map
+            .lock()
+            .map_err(|e| format!("lock pending_imports: {e}"))?;
+        map.insert(
+            id.clone(),
+            PendingImport {
+                chunks,
+                source_file: source_file.clone(),
+                extraction_mode,
+                source,
+            },
+        );
+    }
+
+    crate::open_meeting_window_with_query(app, Some(&id), Some("autostart=import"));
+
+    Ok(StagedImport {
+        id,
+        chunk_count,
+        source_file,
+        extraction_mode,
+        source,
+    })
 }
 
 /// Parse `content`, stage it under a fresh meeting id, and open the
@@ -106,8 +171,6 @@ pub fn stage_pending_import(
     content: &str,
     filename: &str,
 ) -> Result<StagedImport, String> {
-    use tauri::Manager;
-
     if content.trim().is_empty() {
         return Err("content is empty".into());
     }
@@ -121,37 +184,15 @@ pub fn stage_pending_import(
         .unwrap_or_else(|| filename.to_string());
 
     let chunks = parse(content, &basename)?;
-    let chunk_count = chunks.len();
     let extraction_mode = compute_extraction_mode(&chunks);
 
-    let id = format!("meeting-{}", uuid::Uuid::new_v4());
-    crate::log(&format!(
-        "[import] stage_pending_import: parsed {chunk_count} chunks from {basename}, mode={extraction_mode:?}, id={id}"
-    ));
-    {
-        let state = app.state::<PendingImportsState>();
-        let mut map = state
-            .map
-            .lock()
-            .map_err(|e| format!("lock pending_imports: {e}"))?;
-        map.insert(
-            id.clone(),
-            PendingImport {
-                chunks,
-                source_file: basename.clone(),
-                extraction_mode,
-            },
-        );
-    }
-
-    crate::open_meeting_window_with_query(app, Some(&id), Some("autostart=import"));
-
-    Ok(StagedImport {
-        id,
-        chunk_count,
-        source_file: basename,
+    stage_chunks(
+        app,
+        chunks,
+        basename,
         extraction_mode,
-    })
+        MeetingSource::TranscriptImport,
+    )
 }
 
 /// Parse a transcript file's content into normalized chunks. Dispatches

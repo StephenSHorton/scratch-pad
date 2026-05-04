@@ -148,6 +148,12 @@ async fn route(
         (Method::POST, ["meetings", "import"]) => handlers::meetings::import(ctx, &body).await,
         (_, ["meetings", "import"]) => Err(IpcError::MethodNotAllowed),
 
+        // AIZ-31 — audio import. Same precedence note as above.
+        (Method::POST, ["meetings", "import-audio"]) => {
+            handlers::meetings::import_audio(ctx, &body).await
+        }
+        (_, ["meetings", "import-audio"]) => Err(IpcError::MethodNotAllowed),
+
         (Method::GET, ["meetings", id]) => handlers::meetings::get(ctx, id).await,
         (Method::PATCH, ["meetings", id]) => handlers::meetings::patch(ctx, id, &body).await,
         (Method::DELETE, ["meetings", id]) => handlers::meetings::delete(ctx, id).await,

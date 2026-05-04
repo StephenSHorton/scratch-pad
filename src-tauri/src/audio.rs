@@ -288,13 +288,38 @@ fn resample_linear(input: &[f32], from: u32, to: u32) -> Vec<f32> {
 
 /// Loads the whisper model at `model_path` and transcribes the WAV at
 /// `wav_path`. English-only, greedy decoding. Blocking — caller should
-/// run on a worker thread.
+/// run on a worker thread. Used by the test/dev commands; the
+/// audio-import path (AIZ-31) goes through `transcribe_audio_file`,
+/// which dispatches by extension and supports mp3/m4a/flac as well.
 pub fn transcribe_file(
     model_path: &Path,
     wav_path: &Path,
 ) -> Result<Vec<TranscriptSegment>, String> {
     let samples = load_wav_as_mono_16k(wav_path)?;
+    transcribe_samples(model_path, &samples)
+}
 
+/// AIZ-31 — single entry point for offline audio import. Dispatches the
+/// decode by extension (`.wav` via `hound`, `.mp3`/`.m4a`/`.flac` via
+/// symphonia), then runs whisper on the unified mono-16k f32 buffer.
+/// Blocking — run on a worker thread.
+pub fn transcribe_audio_file(
+    model_path: &Path,
+    audio_path: &Path,
+) -> Result<Vec<TranscriptSegment>, String> {
+    let samples = decode_audio_to_mono_16k(audio_path)?;
+    if samples.is_empty() {
+        return Err("Audio file decoded to zero samples".into());
+    }
+    transcribe_samples(model_path, &samples)
+}
+
+/// Whisper invocation shared between the WAV and decoded-audio paths.
+/// `samples` must already be mono f32 PCM at 16 kHz.
+fn transcribe_samples(
+    model_path: &Path,
+    samples: &[f32],
+) -> Result<Vec<TranscriptSegment>, String> {
     let model_str = model_path
         .to_str()
         .ok_or("Model path is not valid UTF-8")?;
@@ -316,7 +341,7 @@ pub fn transcribe_file(
     params.set_tdrz_enable(true);
 
     state
-        .full(params, &samples)
+        .full(params, samples)
         .map_err(|e| format!("Whisper inference failed: {e}"))?;
 
     let n = state.full_n_segments();
@@ -346,6 +371,180 @@ pub fn transcribe_file(
         }
     }
     Ok(segments)
+}
+
+/// Decode any whisper-compatible media file to mono f32 PCM at 16 kHz.
+/// `.wav` goes through `hound`; the rest go through symphonia, which
+/// reads audio tracks out of both audio-only files and video containers
+/// (the video stream is silently ignored). `.mp4` / `.mov` are the same
+/// ISO BMFF container as `.m4a`, so they share the same code path.
+/// Other extensions are rejected so we can give the user a useful error
+/// rather than a downstream symphonia probe failure.
+pub fn decode_audio_to_mono_16k(path: &Path) -> Result<Vec<f32>, String> {
+    let ext = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    match ext.as_str() {
+        "wav" => load_wav_as_mono_16k(path),
+        "mp3" | "m4a" | "flac" | "mp4" | "mov" => decode_with_symphonia(path),
+        other if other.is_empty() => Err(
+            "Media file has no extension; expected .wav, .mp3, .m4a, .flac, .mp4, or .mov".into(),
+        ),
+        other => Err(format!(
+            "Unsupported media extension: .{other}. Use .wav, .mp3, .m4a, .flac, .mp4, or .mov."
+        )),
+    }
+}
+
+/// Decode an `.mp3` / `.m4a` / `.flac` file via symphonia, downmix to
+/// mono, and resample to 16 kHz. Returns the f32 PCM buffer whisper
+/// expects.
+fn decode_with_symphonia(path: &Path) -> Result<Vec<f32>, String> {
+    use symphonia::core::audio::SampleBuffer;
+    use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
+    use symphonia::core::errors::Error as SymphoniaError;
+    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::probe::Hint;
+
+    let file = std::fs::File::open(path)
+        .map_err(|e| format!("Failed to open audio file: {e}"))?;
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+
+    let mut hint = Hint::new();
+    if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+        hint.with_extension(ext);
+    }
+
+    let probed = symphonia::default::get_probe()
+        .format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
+        .map_err(|e| format!("Failed to probe audio format: {e}"))?;
+    let mut format = probed.format;
+
+    let track = format
+        .tracks()
+        .iter()
+        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .ok_or("No decodable audio track found in file")?;
+    let track_id = track.id;
+    // Container probes don't always populate sample_rate / channels up
+    // front (m4a in particular surfaces them only after the first
+    // decoded packet). Read both lazily from the first decoded buffer's
+    // spec; codec_params is just an early hint.
+    let mut sample_rate = track.codec_params.sample_rate;
+    let mut channels: Option<usize> = track.codec_params.channels.map(|c| c.count());
+
+    let mut decoder = symphonia::default::get_codecs()
+        .make(&track.codec_params, &DecoderOptions::default())
+        .map_err(|e| format!("Failed to create audio decoder: {e}"))?;
+
+    let mut sample_buf: Option<SampleBuffer<f32>> = None;
+    let mut interleaved: Vec<f32> = Vec::new();
+
+    loop {
+        let packet = match format.next_packet() {
+            Ok(p) => p,
+            // EOF surfaces as either ResetRequired or an UnexpectedEof
+            // wrapped in IoError, depending on the container.
+            Err(SymphoniaError::IoError(e))
+                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                break;
+            }
+            Err(SymphoniaError::ResetRequired) => break,
+            Err(e) => return Err(format!("Read packet failed: {e}")),
+        };
+        if packet.track_id() != track_id {
+            continue;
+        }
+        match decoder.decode(&packet) {
+            Ok(decoded) => {
+                if sample_buf.is_none() {
+                    let spec = *decoded.spec();
+                    if sample_rate.is_none() {
+                        sample_rate = Some(spec.rate);
+                    }
+                    if channels.is_none() {
+                        channels = Some(spec.channels.count());
+                    }
+                    let duration = decoded.capacity() as u64;
+                    sample_buf = Some(SampleBuffer::<f32>::new(duration, spec));
+                }
+                if let Some(buf) = sample_buf.as_mut() {
+                    buf.copy_interleaved_ref(decoded);
+                    interleaved.extend_from_slice(buf.samples());
+                }
+            }
+            // Decode-only errors are recoverable per symphonia's contract.
+            Err(SymphoniaError::DecodeError(e)) => {
+                eprintln!("[audio-import] decode error (skipping packet): {e}");
+                continue;
+            }
+            Err(e) => return Err(format!("Decoder error: {e}")),
+        }
+    }
+
+    if interleaved.is_empty() {
+        return Err("Audio file decoded to zero samples".into());
+    }
+    let channels = channels.ok_or("Audio track has unknown channel layout")?;
+    let sample_rate = sample_rate.ok_or("Audio track has unknown sample rate")?;
+
+    let mono: Vec<f32> = if channels <= 1 {
+        interleaved
+    } else {
+        interleaved
+            .chunks(channels)
+            .map(|frame| frame.iter().sum::<f32>() / frame.len() as f32)
+            .collect()
+    };
+
+    if sample_rate == 16_000 {
+        Ok(mono)
+    } else {
+        Ok(resample_linear(&mono, sample_rate, 16_000))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Drives `decode_audio_to_mono_16k` against a real audio file at
+    /// `$AIZ31_AUDIO_PATH`. Skipped silently when the env var is unset
+    /// so CI / cargo-test on a clean checkout doesn't fail.
+    #[test]
+    fn decode_audio_to_mono_16k_real_file() {
+        let path = match std::env::var("AIZ31_AUDIO_PATH") {
+            Ok(p) => std::path::PathBuf::from(p),
+            Err(_) => return,
+        };
+        let samples = decode_audio_to_mono_16k(&path).expect("decode failed");
+        assert!(!samples.is_empty(), "decoded zero samples");
+        let dur_s = samples.len() as f64 / 16_000.0;
+        eprintln!(
+            "decoded {} samples ({:.2}s @ 16kHz mono) from {}",
+            samples.len(),
+            dur_s,
+            path.display()
+        );
+        assert!(dur_s > 0.0 && dur_s < 600.0, "duration out of plausible range");
+    }
+
+    #[test]
+    fn decode_audio_to_mono_16k_rejects_unsupported() {
+        let bad = std::path::Path::new("/tmp/does-not-exist.csv");
+        let err = decode_audio_to_mono_16k(bad).unwrap_err();
+        assert!(err.contains("Unsupported"), "got: {err}");
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -637,11 +637,38 @@ cli
 					case "import": {
 						if (!id) {
 							process.stderr.write(
-								"aizuchi: meeting import requires a path to a transcript file (.txt / .md / .json).\n",
+								"aizuchi: meeting import requires a path to a transcript, audio, or video file (.txt / .md / .json / .wav / .mp3 / .m4a / .flac / .mp4 / .mov).\n",
 							);
 							process.exit(1);
 						}
 						const filePath = path.resolve(id);
+						const ext = path.extname(filePath).toLowerCase();
+						const mediaExts = new Set([
+							".wav",
+							".mp3",
+							".m4a",
+							".flac",
+							".mp4",
+							".mov",
+						]);
+						if (mediaExts.has(ext)) {
+							// AIZ-31 — audio path: server reads the file and runs
+							// whisper. This can take tens of seconds for a multi-
+							// minute clip; show a hint so the user doesn't think we hung.
+							if (!flags.json)
+								process.stdout.write(
+									`Transcribing ${path.basename(filePath)} (this can take a while)…\n`,
+								);
+							const result = await client.importAudioMeeting({
+								path: filePath,
+							});
+							if (flags.json) emitJson(result);
+							else
+								process.stdout.write(
+									`Imported ${result.chunkCount} chunk(s) from ${result.sourceFile} as ${result.id}. Window opened.\n`,
+								);
+							return;
+						}
 						let content: string;
 						try {
 							content = await fs.readFile(filePath, "utf-8");

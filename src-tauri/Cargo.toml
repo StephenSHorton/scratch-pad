@@ -36,6 +36,9 @@ local-ip-address = "0.6"
 cpal = "0.15"
 hound = "3.5"
 whisper-rs = "0.16"
+# AIZ-31 — decode .mp3/.m4a/.flac for offline audio import. WAV stays on
+# `hound` for the live-capture path. Pure-Rust, no native deps.
+symphonia = { version = "0.5", features = ["mp3", "aac", "alac", "flac", "isomp4"] }
 
 # IPC server (AIZ-20)
 hyper = { version = "1", features = ["http1", "server"] }
