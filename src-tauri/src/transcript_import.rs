@@ -16,7 +16,7 @@
 //! `max(1000ms, word_count * 400ms)` per chunk — enough simulated time
 //! that the 25s time-based batch threshold fires naturally.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -34,6 +34,39 @@ pub struct ImportedChunk {
     pub end_ms: i64,
 }
 
+/// AIZ-32 — picks the prompt template the extraction loop runs against.
+/// Computed from the parsed chunks at staging time so the React side can
+/// thread it straight through to `mutateGraph` without recomputing.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ExtractionMode {
+    /// 2+ distinct named speakers → speaker-aware extraction (today's behavior).
+    Attribution,
+    /// 0 or 1 distinct named speakers → no `person`/`unknown` nodes, focus on
+    /// claims / decisions / topics. Solo monologues and unlabeled transcripts.
+    Substance,
+}
+
+/// AIZ-32 — auto-select rule. Distinct named speakers (excluding the
+/// `unknown` placeholder) drive the choice: 2+ → attribution, otherwise
+/// substance. Mixed labeled + unknown still resolves through this counter,
+/// so a transcript with two real speakers and stray unknowns stays in
+/// attribution mode (the user gave us what they had).
+pub fn compute_extraction_mode(chunks: &[ImportedChunk]) -> ExtractionMode {
+    let mut named: HashSet<&str> = HashSet::new();
+    for c in chunks {
+        let speaker = c.speaker.as_str();
+        if speaker != UNKNOWN_SPEAKER {
+            named.insert(speaker);
+        }
+    }
+    if named.len() >= 2 {
+        ExtractionMode::Attribution
+    } else {
+        ExtractionMode::Substance
+    }
+}
+
 /// Transcript chunks + originating filename, staged by `POST /v1/meetings/import`
 /// awaiting pickup by the freshly-opened meeting window. Cleared on first read.
 #[derive(Debug, Serialize)]
@@ -41,6 +74,7 @@ pub struct ImportedChunk {
 pub struct PendingImport {
     pub chunks: Vec<ImportedChunk>,
     pub source_file: String,
+    pub extraction_mode: ExtractionMode,
 }
 
 /// Tauri-managed state. Both the IPC import handler (which writes) and the
@@ -59,6 +93,7 @@ pub struct StagedImport {
     pub id: String,
     pub chunk_count: usize,
     pub source_file: String,
+    pub extraction_mode: ExtractionMode,
 }
 
 /// Parse `content`, stage it under a fresh meeting id, and open the
@@ -87,10 +122,11 @@ pub fn stage_pending_import(
 
     let chunks = parse(content, &basename)?;
     let chunk_count = chunks.len();
+    let extraction_mode = compute_extraction_mode(&chunks);
 
     let id = format!("meeting-{}", uuid::Uuid::new_v4());
     crate::log(&format!(
-        "[import] stage_pending_import: parsed {chunk_count} chunks from {basename}, id={id}"
+        "[import] stage_pending_import: parsed {chunk_count} chunks from {basename}, mode={extraction_mode:?}, id={id}"
     ));
     {
         let state = app.state::<PendingImportsState>();
@@ -103,6 +139,7 @@ pub fn stage_pending_import(
             PendingImport {
                 chunks,
                 source_file: basename.clone(),
+                extraction_mode,
             },
         );
     }
@@ -113,6 +150,7 @@ pub fn stage_pending_import(
         id,
         chunk_count,
         source_file: basename,
+        extraction_mode,
     })
 }
 
@@ -602,6 +640,52 @@ mod tests {
         let input = "We Should Ship This: it's ready.";
         let out = parse_text(input).unwrap();
         assert_eq!(out[0].speaker, "unknown");
+    }
+
+    fn chunk(speaker: &str) -> ImportedChunk {
+        ImportedChunk {
+            speaker: speaker.to_string(),
+            text: "x".into(),
+            start_ms: 0,
+            end_ms: 1000,
+        }
+    }
+
+    #[test]
+    fn extraction_mode_zero_named_is_substance() {
+        let chunks = vec![chunk("unknown"), chunk("unknown"), chunk("unknown")];
+        assert_eq!(compute_extraction_mode(&chunks), ExtractionMode::Substance);
+    }
+
+    #[test]
+    fn extraction_mode_one_named_is_substance() {
+        let chunks = vec![chunk("Stephen"), chunk("Stephen"), chunk("Stephen")];
+        assert_eq!(compute_extraction_mode(&chunks), ExtractionMode::Substance);
+    }
+
+    #[test]
+    fn extraction_mode_two_named_is_attribution() {
+        let chunks = vec![chunk("Stephen"), chunk("Adrian"), chunk("Stephen")];
+        assert_eq!(compute_extraction_mode(&chunks), ExtractionMode::Attribution);
+    }
+
+    #[test]
+    fn extraction_mode_mixed_named_and_unknown_leans_attribution() {
+        let chunks = vec![
+            chunk("Stephen"),
+            chunk("unknown"),
+            chunk("Adrian"),
+            chunk("unknown"),
+        ];
+        assert_eq!(compute_extraction_mode(&chunks), ExtractionMode::Attribution);
+    }
+
+    #[test]
+    fn extraction_mode_one_named_with_unknowns_is_substance() {
+        // Single real speaker plus stray unknowns — still solo, not enough
+        // signal to attribute.
+        let chunks = vec![chunk("Stephen"), chunk("unknown"), chunk("Stephen")];
+        assert_eq!(compute_extraction_mode(&chunks), ExtractionMode::Substance);
     }
 
     #[test]
