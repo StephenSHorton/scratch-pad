@@ -134,6 +134,18 @@ jobs:
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: --target x86_64-pc-windows-msvc
+      # tauri-action@v0 uploads installers (exe, msi) but skips the NSIS
+      # updater bundle. Upload it explicitly so the `updater` job can sign
+      # it into latest.json's windows-x86_64 entry.
+      - name: Upload Windows updater bundle
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis
+          gh release upload "${GITHUB_REF_NAME}" \
+            *_x64-setup.nsis.zip *_x64-setup.nsis.zip.sig \
+            --repo "${{ github.repository }}" --clobber
 
   updater:
     needs: [build-aarch64, build-x64, build-windows, build-linux]
