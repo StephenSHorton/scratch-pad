@@ -1,0 +1,217 @@
+[0:00:11] Stephen Horton: Uh,
+
+[0:00:14] Stephen Horton: hello.
+
+[0:00:22] Stephen Horton: You know, I once had a lady, uh, tell me that I spoke Spanish exactly like an Argentinian, 'cause I have a low voice. And so, like, when I, uh...
+
+[0:00:34] Stephen Horton: When I was, like, trying to- 'Cause, like, when I was learning Spanish, right, I tried to mimic other people because, like, I don't know, maybe, maybe they understand you better when you try to, like, match them, right? Uh, and, uh, I had a lady tell me that I sounded just like a, a Castillano.
+
+[0:00:51] Adrian Beria: Oh, interesting. So you speak a lot of vos instead of tú?
+
+[0:00:55] Stephen Horton: Yeah, vos. Yeah, yeah.
+
+[0:00:57] Adrian Beria: Oh, gotcha. Yeah.
+
+[0:00:57] Stephen Horton: Vos tenés que irte. Vos tenés que irte.
+
+[0:01:01] Adrian Beria: Huh?
+
+[0:01:03] Stephen Horton: Vos tenés que irte. They would, they would speak like that.
+
+[0:01:08] Adrian Beria: Ah.
+
+[0:01:10] Stephen Horton: It's the same when I said that.
+
+[0:01:11] Adrian Beria: Yeah, so in some places in Venezuela they speak like that though, and in Uruguay and Argentina, they use vos a lot.
+
+[0:01:18] Stephen Horton: Yeah, they would, they would, uh, cut off the S and they would just say, "Vo." ¿Vo queré ir? Like, they would say... It's, like, a very... I don't know how to even describe it.
+
+[0:01:26] Adrian Beria: Ah, gotcha. Yeah, yeah.
+
+[0:01:27] Stephen Horton: Yeah, yeah.
+
+[0:01:27] Adrian Beria: Some speak like that, uh.
+
+[0:01:29] Stephen Horton: You can imagine how difficult it was for me to understand people.
+
+[0:01:33] Adrian Beria: ¿Vo querés hablar?
+
+[0:01:33] Stephen Horton: Especially when, like... Yeah, especially when you, like, come from the US and they think Spanish is a certain way, right? And so you're just, like, learning it, and then you get there and they don't speak it that way at all.
+
+[0:01:45] Adrian Beria: Yeah, learning Spanish, you knowing English is harder. Like, from learning Spanish, uh, learning English-
+
+[0:01:52] Stephen Horton: Oh, you think?
+
+[0:01:54] Adrian Beria: Yeah, learning English as a Spanish speaker is a lot easier because we're more... Um, the c- the culture is everywhere, movies, um, books, like everywhere, internet. It's a lot easier.
+
+[0:02:06] Stephen Horton: Interesting. Interesting.
+
+[0:02:08] Adrian Beria: That's why learning Portuguese is a lot easier for Spanish speakers too, because it's, they're very similar as well.
+
+[0:02:15] Stephen Horton: I did see that. I was learning Portuguese as well. Yeah.
+
+[0:02:19] Adrian Beria: Yeah, that's the reason. They're very similar in that case.
+
+[0:02:24] Stephen Horton: Jeez. Yo, Blake, why don't you shut up? Why are you talking so much?
+
+[0:02:31] Stephen Horton: We can't hear you.
+
+[0:02:37] Blake Lewis: Sorry, my bad.
+
+[0:02:39] Stephen Horton: Dang, you didn't have to do me like that.
+
+[0:02:46] Stephen Horton: Okay, I'm gonna mute you, Blake.
+
+[0:02:46] Adrian Beria: Where's the computer? Where's the computer, Blake?
+
+[0:02:49] Stephen Horton: Ooh, that's right.
+
+[0:02:52] Adrian Beria: What did you install?
+
+[0:02:53] Blake Lewis: It's, uh, it's at my house.
+
+[0:02:58] Stephen Horton: Dang. He- it's at his house. Didn't install anything.
+
+[0:03:03] Adrian Beria: Still building it?
+
+[0:03:05] Blake Lewis: Well, it was a pre-built, so.
+
+[0:03:08] Adrian Beria: Oh.
+
+[0:03:11] Stephen Horton: Wait, you didn't try your frames for, uh-
+
+[0:03:14] Blake Lewis: I did not. I've not yet had the chance.
+
+[0:03:18] Stephen Horton: Dang. You just wanted to look at it. You, you didn't wanna use it though?
+
+[0:03:21] Blake Lewis: Yeah. No, exactly. Sometimes things are just too glorious to use, you just gotta look at it.
+
+[0:03:30] Stephen Horton: You know that feeling when you're driving and you ca- you don't realize that you're driving still for some reason, and then you freak out that, like, you just went through maybe a red light? I just got that.
+
+[0:03:41] Blake Lewis: Well, run that red light.
+
+[0:03:43] Blake Lewis: Yeah, don't do that.
+
+[0:03:46] Blake Lewis: Okay, uh, let's go ahead and get started. Um,
+
+[0:03:51] Blake Lewis: we'll call on the man back from the dead. Travis, how you doing?
+
+[0:03:57] Travis McCormick: Hey, I'm doing good. Um, still recovering a little bit, but, um, I'm good.
+
+[0:04:04] Blake Lewis: Good.
+
+[0:04:04] Travis McCormick: So I'm working on, um, intelligence. There, we showed it yesterday in the product meeting, and there are a few changes and UX improvements that we need to make. Um, also working on what Matt is referring to as hardening, um, and making everything more cohesive, and I... A lot of the UX changes that I'm proposing will do that. So yeah, that's what I'm doing. I'm working on pulling in a lot of the design for the sidebar, 'cause that was designed, um, a long time ago, so there's some updates that I need to make in the design for the AI sidebar. But working on that, and then, um, I will create Linear tasks to get those updated.
+
+[0:04:54] Blake Lewis: Okay. Sounds good. Uh, Steven, since you're, since you're driving.
+
+[0:05:00] Stephen Horton: Yeah. Uh, so I released the new bug intake and feedback intake, uh, stuff. We're now directly integrated with Linear, no middleman. Uh, it's really nice and clean. The client is working. So, um, besides that, uh, added a bunch of components to indicate to somebody that they are looking at a beta feature. Travis, I kinda just winged it, so I'm sure you... I- if you have time, you know, I'm sure you would, uh, wanna change those things. So if you do find time, uh, totally willing to make changes to those. But, uh, I can also show you, uh, a page in the app where I put up the components if you wanna just, like, preview them. Um, maybe I'll send that to you on Slack. Uh-
+
+[0:05:40] Travis McCormick: Yeah
+
+[0:05:41] Stephen Horton: ... cool. Um, uh,
+
+[0:05:46] Stephen Horton: oh yeah, uh, we had a meeting of about, uh, all of the things that people do still outside of the app. Uh, there's a spreadsheet now with all that on there, so basically gonna be... Uh, I mean, I think this is my priority now. I don't know. Uh, I, I guess I, uh-Feel a little disconnected from our roadmap, uh, if there is a connected roadmap right now. But basically, uh, I feel compelled to fix all of the things that people have to do outside of the app. So, um, gonna basically just keep working through that spreadsheet, uh, unless somebody has objections about that. So that's what I'll be working on.
+
+[0:06:23] Blake Lewis: Yeah, it's fine. I mean, many of those things
+
+[0:06:25] Stephen Horton: Yeah.
+
+[0:06:27] Blake Lewis: Is
+
+[0:06:30] Blake Lewis: worthwhile.
+
+[0:06:32] Blake Lewis: Okay. It is. Got the thumbs up. Okay, uh, Adrian.
+
+[0:06:38] Adrian Beria: Uh, me first I was mostly working on deprecating the CSS styles. There are a lot of those-
+
+[0:06:43] Blake Lewis: Mm-hmm
+
+[0:06:43] Adrian Beria: ... that I need to done. Um, I did three out of seven for the t- the typography. Uh, I was gonna continue with that, but I saw that Spencer added like 30 tasks for billing. I'm working through those. So they only be working mostly on the overview part first. Um, those are eight tasks, so I'll be working through that. Uh, yeah, I will go and show those 30 tasks, um, as fast as I can. That's what I have right now.
+
+[0:07:11] Blake Lewis: Okay, awesome. Thank you. Diego.
+
+[0:07:15] Diego Gonzalez: Hey. Well, uh, I started to work on the handlers for billing, uh, on Keiki. I'm going to continue working on that. I hope today complete at least the PR ready for share with, with you. Uh, that's it from my side.
+
+[0:07:33] Blake Lewis: Okay. Thank you.
+
+[0:07:34] Diego Gonzalez: Thank you.
+
+[0:07:34] Blake Lewis: Uh, Paul.
+
+[0:07:36] Blake Lewis: Yeah, I was just working on the billing stuff. Um, and I think I got most of those done. So I'm gonna work on, um, the tasks Steven assigned me, uh, for moving the Persona AI generation code, um, into our AI service. I'm just gonna keep working on that.
+
+[0:07:55] Blake Lewis: Okay. Good deal.
+
+[0:07:57] Blake Lewis: Um, I'm still working on trying to connect HubSpot, Stripe, and, um, the partner into one table. Um, the complexity is a lot more than anticipated. Uh, so it's been
+
+[0:08:13] Blake Lewis: very slow 'cause I wanna make sure that I don't break anything, and I wanna make sure it's done right. So that's been the biggest pain point is trying to keep all that in line. So I'm hoping to have it written today. We'll see.
+
+[0:08:32] Blake Lewis: Okay, uh, Blake.
+
+[0:08:35] Blake Lewis: Uh, yesterday was working on a few, few support things, um, with these self... some self-service campaigns. They weren't spending, so was doing some investigating. Um, and then, uh, today I have a, I have a few meetings regarding, um, some, some product stuff. So this morning I have a meeting with Colin to kind of go over selecting inventory. Um, and then I also have a meeting, uh, me and... well, actually it's me and Spencer have a meeting with Eric to go over his, uh, his creative thing, so, um-
+
+[0:09:10] Blake Lewis: Did he add you to that?
+
+[0:09:12] Blake Lewis: The, the creative thing?
+
+[0:09:14] Blake Lewis: Yeah. It still just shows me in here, but-
+
+[0:09:16] Blake Lewis: Oh, weird. I, I, uh-
+
+[0:09:19] Blake Lewis: Is it on calendar by any chance?
+
+[0:09:21] Blake Lewis: Yeah. At 10:00, yeah. I'm-
+
+[0:09:23] Blake Lewis: All right, cool.
+
+[0:09:24] Blake Lewis: Yeah.
+
+[0:09:24] Blake Lewis: That's fine.
+
+[0:09:24] Blake Lewis: Yeah, yeah. So gonna do that and also just be where I need to be, so if you guys need me to test anything, um, I can do that.
+
+[0:09:33] Blake Lewis: Outstanding. Cool. Uh, Spencer, you have anything for us?
+
+[0:09:37] Blake Lewis: Yes.
+
+[0:09:38] Blake Lewis: Love it.
+
+[0:09:39] Blake Lewis: Uh, I finally got into the billing stuff, and I got into the March... I think we had a meeting, like, towards the end of March where we went over some design review stuff, and I think a number of things just didn't make it into the design. I don't know if those were, uh, decisions or if those were just oversight on my part 'cause I didn't update the, the lin- the Linear fast enough. Um, but going back through it and looking at them, I don't think we made decisions not to include them. There's some reordering and stuff. Um, so I started creating tasks for those. And then on the back end, it looks like there's some, uh,
+
+[0:10:23] Blake Lewis: some things in the front end that are pointing towards legacy endpoints that we meant to repoint at some point. There's comments in there that, that this, like, uh, the
+
+[0:10:36] Blake Lewis: total available and stuff like that are pointing at the old... not at the old, but they're pointing at the events table and the credit stuff instead-
+
+[0:10:43] Blake Lewis: Okay
+
+[0:10:43] Blake Lewis: ... of the ledger-
+
+[0:10:44] Blake Lewis: Okay
+
+[0:10:45] Blake Lewis: ... numbers. So I created some tasks for that. Um,
+
+[0:10:49] Blake Lewis: I, I don't... I think they're right, but we should have a conversation about them, so I'll try and find some time for us to get together.
+
+[0:10:57] Blake Lewis: Good. I'll look at it.
+
+[0:10:59] Blake Lewis: And, um, and then, uh, yeah, there's some other stuff too, just like we talked, we talked about how, um, invoices are being created on campaigns instead of on line items and how to get line items and create the invoices on that. So there's some function that I'm just working through and trying to clarify in the Linear tasks-
+
+[0:11:20] Blake Lewis: Mm-hmm
+
+[0:11:20] Blake Lewis: ... uh, how I think it's supposed to work. Um, so those have started coming in. There's some tasks there to look at, I think.
+
+[0:11:27] Blake Lewis: Awesome.
+
+[0:11:28] Blake Lewis: Front end and back end entry.
+
+[0:11:32] Blake Lewis: Cool.
+
+[0:11:34] Blake Lewis: All right. Anybody have anything else?
+
+[0:11:38] Adrian Beria: Thanks.
+
+[0:11:39] Blake Lewis: Cool. Come on.
+
+[0:11:39] Blake Lewis: No jokes.
+
+[0:11:41] Blake Lewis: Have a good one, guys.

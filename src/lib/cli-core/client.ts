@@ -17,6 +17,8 @@ import { AppNotRunningError, errorFromServer, IpcClientError } from "./errors";
 import type {
 	AppStatus,
 	CreatePadInput,
+	ImportMeetingInput,
+	ImportMeetingResponse,
 	IpcConfig,
 	ListPadsOptions,
 	MeetingMeta,
@@ -205,6 +207,13 @@ export class AizuchiClient {
 		return this.request<StartMeetingResponse>("/meetings", {
 			method: "POST",
 			body: { mode },
+		});
+	}
+
+	importMeeting(input: ImportMeetingInput): Promise<ImportMeetingResponse> {
+		return this.request<ImportMeetingResponse>("/meetings/import", {
+			method: "POST",
+			body: input,
 		});
 	}
 

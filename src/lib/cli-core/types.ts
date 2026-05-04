@@ -101,6 +101,20 @@ export interface ResumeMeetingResponse {
 	windowOpened: boolean;
 }
 
+export interface ImportMeetingInput {
+	/** Raw transcript content. CLI reads the file off disk; web flows can post in-memory text. */
+	content: string;
+	/** Original filename. Used for extension dispatch and stored as the snapshot's sourceFile. */
+	filename: string;
+}
+
+export interface ImportMeetingResponse {
+	id: string;
+	openedWindow: boolean;
+	chunkCount: number;
+	sourceFile: string;
+}
+
 // ---------- Discovery ----------
 
 export interface IpcConfig {

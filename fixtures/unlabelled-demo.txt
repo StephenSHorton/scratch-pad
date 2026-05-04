@@ -1,0 +1,217 @@
+[0:00:11] Uh,
+
+[0:00:14] hello.
+
+[0:00:22] You know, I once had a lady, uh, tell me that I spoke Spanish exactly like an Argentinian, 'cause I have a low voice. And so, like, when I, uh...
+
+[0:00:34] When I was, like, trying to- 'Cause, like, when I was learning Spanish, right, I tried to mimic other people because, like, I don't know, maybe, maybe they understand you better when you try to, like, match them, right? Uh, and, uh, I had a lady tell me that I sounded just like a, a Castillano.
+
+[0:00:51] Oh, interesting. So you speak a lot of vos instead of tú?
+
+[0:00:55] Yeah, vos. Yeah, yeah.
+
+[0:00:57] Oh, gotcha. Yeah.
+
+[0:00:57] Vos tenés que irte. Vos tenés que irte.
+
+[0:01:01] Huh?
+
+[0:01:03] Vos tenés que irte. They would, they would speak like that.
+
+[0:01:08] Ah.
+
+[0:01:10] It's the same when I said that.
+
+[0:01:11] Yeah, so in some places in Venezuela they speak like that though, and in Uruguay and Argentina, they use vos a lot.
+
+[0:01:18] Yeah, they would, they would, uh, cut off the S and they would just say, "Vo." ¿Vo queré ir? Like, they would say... It's, like, a very... I don't know how to even describe it.
+
+[0:01:26] Ah, gotcha. Yeah, yeah.
+
+[0:01:27] Yeah, yeah.
+
+[0:01:27] Some speak like that, uh.
+
+[0:01:29] You can imagine how difficult it was for me to understand people.
+
+[0:01:33] ¿Vo querés hablar?
+
+[0:01:33] Especially when, like... Yeah, especially when you, like, come from the US and they think Spanish is a certain way, right? And so you're just, like, learning it, and then you get there and they don't speak it that way at all.
+
+[0:01:45] Yeah, learning Spanish, you knowing English is harder. Like, from learning Spanish, uh, learning English-
+
+[0:01:52] Oh, you think?
+
+[0:01:54] Yeah, learning English as a Spanish speaker is a lot easier because we're more... Um, the c- the culture is everywhere, movies, um, books, like everywhere, internet. It's a lot easier.
+
+[0:02:06] Interesting. Interesting.
+
+[0:02:08] That's why learning Portuguese is a lot easier for Spanish speakers too, because it's, they're very similar as well.
+
+[0:02:15] I did see that. I was learning Portuguese as well. Yeah.
+
+[0:02:19] Yeah, that's the reason. They're very similar in that case.
+
+[0:02:24] Jeez. Yo, Blake, why don't you shut up? Why are you talking so much?
+
+[0:02:31] We can't hear you.
+
+[0:02:37] Sorry, my bad.
+
+[0:02:39] Dang, you didn't have to do me like that.
+
+[0:02:46] Okay, I'm gonna mute you, Blake.
+
+[0:02:46] Where's the computer? Where's the computer, Blake?
+
+[0:02:49] Ooh, that's right.
+
+[0:02:52] What did you install?
+
+[0:02:53] It's, uh, it's at my house.
+
+[0:02:58] Dang. He- it's at his house. Didn't install anything.
+
+[0:03:03] Still building it?
+
+[0:03:05] Well, it was a pre-built, so.
+
+[0:03:08] Oh.
+
+[0:03:11] Wait, you didn't try your frames for, uh-
+
+[0:03:14] I did not. I've not yet had the chance.
+
+[0:03:18] Dang. You just wanted to look at it. You, you didn't wanna use it though?
+
+[0:03:21] Yeah. No, exactly. Sometimes things are just too glorious to use, you just gotta look at it.
+
+[0:03:30] You know that feeling when you're driving and you ca- you don't realize that you're driving still for some reason, and then you freak out that, like, you just went through maybe a red light? I just got that.
+
+[0:03:41] Well, run that red light.
+
+[0:03:43] Yeah, don't do that.
+
+[0:03:46] Okay, uh, let's go ahead and get started. Um,
+
+[0:03:51] we'll call on the man back from the dead. Travis, how you doing?
+
+[0:03:57] Hey, I'm doing good. Um, still recovering a little bit, but, um, I'm good.
+
+[0:04:04] Good.
+
+[0:04:04] So I'm working on, um, intelligence. There, we showed it yesterday in the product meeting, and there are a few changes and UX improvements that we need to make. Um, also working on what Matt is referring to as hardening, um, and making everything more cohesive, and I... A lot of the UX changes that I'm proposing will do that. So yeah, that's what I'm doing. I'm working on pulling in a lot of the design for the sidebar, 'cause that was designed, um, a long time ago, so there's some updates that I need to make in the design for the AI sidebar. But working on that, and then, um, I will create Linear tasks to get those updated.
+
+[0:04:54] Okay. Sounds good. Uh, Steven, since you're, since you're driving.
+
+[0:05:00] Yeah. Uh, so I released the new bug intake and feedback intake, uh, stuff. We're now directly integrated with Linear, no middleman. Uh, it's really nice and clean. The client is working. So, um, besides that, uh, added a bunch of components to indicate to somebody that they are looking at a beta feature. Travis, I kinda just winged it, so I'm sure you... I- if you have time, you know, I'm sure you would, uh, wanna change those things. So if you do find time, uh, totally willing to make changes to those. But, uh, I can also show you, uh, a page in the app where I put up the components if you wanna just, like, preview them. Um, maybe I'll send that to you on Slack. Uh-
+
+[0:05:40] Yeah
+
+[0:05:41] ... cool. Um, uh,
+
+[0:05:46] oh yeah, uh, we had a meeting of about, uh, all of the things that people do still outside of the app. Uh, there's a spreadsheet now with all that on there, so basically gonna be... Uh, I mean, I think this is my priority now. I don't know. Uh, I, I guess I, uh-Feel a little disconnected from our roadmap, uh, if there is a connected roadmap right now. But basically, uh, I feel compelled to fix all of the things that people have to do outside of the app. So, um, gonna basically just keep working through that spreadsheet, uh, unless somebody has objections about that. So that's what I'll be working on.
+
+[0:06:23] Yeah, it's fine. I mean, many of those things
+
+[0:06:25] Yeah.
+
+[0:06:27] Is
+
+[0:06:30] worthwhile.
+
+[0:06:32] Okay. It is. Got the thumbs up. Okay, uh, Adrian.
+
+[0:06:38] Uh, me first I was mostly working on deprecating the CSS styles. There are a lot of those-
+
+[0:06:43] Mm-hmm
+
+[0:06:43] ... that I need to done. Um, I did three out of seven for the t- the typography. Uh, I was gonna continue with that, but I saw that Spencer added like 30 tasks for billing. I'm working through those. So they only be working mostly on the overview part first. Um, those are eight tasks, so I'll be working through that. Uh, yeah, I will go and show those 30 tasks, um, as fast as I can. That's what I have right now.
+
+[0:07:11] Okay, awesome. Thank you. Diego.
+
+[0:07:15] Hey. Well, uh, I started to work on the handlers for billing, uh, on Keiki. I'm going to continue working on that. I hope today complete at least the PR ready for share with, with you. Uh, that's it from my side.
+
+[0:07:33] Okay. Thank you.
+
+[0:07:34] Thank you.
+
+[0:07:34] Uh, Paul.
+
+[0:07:36] Yeah, I was just working on the billing stuff. Um, and I think I got most of those done. So I'm gonna work on, um, the tasks Steven assigned me, uh, for moving the Persona AI generation code, um, into our AI service. I'm just gonna keep working on that.
+
+[0:07:55] Okay. Good deal.
+
+[0:07:57] Um, I'm still working on trying to connect HubSpot, Stripe, and, um, the partner into one table. Um, the complexity is a lot more than anticipated. Uh, so it's been
+
+[0:08:13] very slow 'cause I wanna make sure that I don't break anything, and I wanna make sure it's done right. So that's been the biggest pain point is trying to keep all that in line. So I'm hoping to have it written today. We'll see.
+
+[0:08:32] Okay, uh, Blake.
+
+[0:08:35] Uh, yesterday was working on a few, few support things, um, with these self... some self-service campaigns. They weren't spending, so was doing some investigating. Um, and then, uh, today I have a, I have a few meetings regarding, um, some, some product stuff. So this morning I have a meeting with Colin to kind of go over selecting inventory. Um, and then I also have a meeting, uh, me and... well, actually it's me and Spencer have a meeting with Eric to go over his, uh, his creative thing, so, um-
+
+[0:09:10] Did he add you to that?
+
+[0:09:12] The, the creative thing?
+
+[0:09:14] Yeah. It still just shows me in here, but-
+
+[0:09:16] Oh, weird. I, I, uh-
+
+[0:09:19] Is it on calendar by any chance?
+
+[0:09:21] Yeah. At 10:00, yeah. I'm-
+
+[0:09:23] All right, cool.
+
+[0:09:24] Yeah.
+
+[0:09:24] That's fine.
+
+[0:09:24] Yeah, yeah. So gonna do that and also just be where I need to be, so if you guys need me to test anything, um, I can do that.
+
+[0:09:33] Outstanding. Cool. Uh, Spencer, you have anything for us?
+
+[0:09:37] Yes.
+
+[0:09:38] Love it.
+
+[0:09:39] Uh, I finally got into the billing stuff, and I got into the March... I think we had a meeting, like, towards the end of March where we went over some design review stuff, and I think a number of things just didn't make it into the design. I don't know if those were, uh, decisions or if those were just oversight on my part 'cause I didn't update the, the lin- the Linear fast enough. Um, but going back through it and looking at them, I don't think we made decisions not to include them. There's some reordering and stuff. Um, so I started creating tasks for those. And then on the back end, it looks like there's some, uh,
+
+[0:10:23] some things in the front end that are pointing towards legacy endpoints that we meant to repoint at some point. There's comments in there that, that this, like, uh, the
+
+[0:10:36] total available and stuff like that are pointing at the old... not at the old, but they're pointing at the events table and the credit stuff instead-
+
+[0:10:43] Okay
+
+[0:10:43] ... of the ledger-
+
+[0:10:44] Okay
+
+[0:10:45] ... numbers. So I created some tasks for that. Um,
+
+[0:10:49] I, I don't... I think they're right, but we should have a conversation about them, so I'll try and find some time for us to get together.
+
+[0:10:57] Good. I'll look at it.
+
+[0:10:59] And, um, and then, uh, yeah, there's some other stuff too, just like we talked, we talked about how, um, invoices are being created on campaigns instead of on line items and how to get line items and create the invoices on that. So there's some function that I'm just working through and trying to clarify in the Linear tasks-
+
+[0:11:20] Mm-hmm
+
+[0:11:20] ... uh, how I think it's supposed to work. Um, so those have started coming in. There's some tasks there to look at, I think.
+
+[0:11:27] Awesome.
+
+[0:11:28] Front end and back end entry.
+
+[0:11:32] Cool.
+
+[0:11:34] All right. Anybody have anything else?
+
+[0:11:38] Thanks.
+
+[0:11:39] Cool. Come on.
+
+[0:11:39] No jokes.
+
+[0:11:41] Have a good one, guys.

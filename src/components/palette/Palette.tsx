@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Trash2 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -32,6 +33,12 @@ const ACTIONS: Action[] = [
 		id: "browse_meetings",
 		label: "Browse meetings…",
 		description: "Search every saved meeting; open or delete from the palette",
+	},
+	{
+		id: "import_meeting",
+		label: "Import meeting…",
+		description:
+			"Process a transcript file (.txt / .md / .json) as a meeting — no realtime pacing",
 	},
 	{
 		id: "new_pad",
@@ -288,6 +295,42 @@ export function Palette() {
 				console.error("[audio] live capture failed:", err),
 			);
 			beginClose();
+			return;
+		}
+		if (id === "import_meeting") {
+			// Close the palette first so the file picker takes focus, then
+			// open the dialog. Errors and cancellations are silent — the
+			// user can re-trigger from the palette.
+			beginClose();
+			openDialog({
+				multiple: false,
+				directory: false,
+				title: "Import meeting transcript",
+				filters: [
+					{
+						name: "Transcript",
+						extensions: ["txt", "md", "json"],
+					},
+				],
+			})
+				.then((selected) => {
+					if (typeof selected !== "string") return;
+					return invoke<{
+						id: string;
+						chunkCount: number;
+						sourceFile: string;
+					}>("import_meeting_from_path", { path: selected });
+				})
+				.then((result) => {
+					if (result) {
+						console.log(
+							`[meeting-import] staged ${result.chunkCount} chunk(s) from ${result.sourceFile} as ${result.id}`,
+						);
+					}
+				})
+				.catch((err) => {
+					console.error("[meeting-import] failed:", err);
+				});
 			return;
 		}
 		if (id === "open_last_meeting") {

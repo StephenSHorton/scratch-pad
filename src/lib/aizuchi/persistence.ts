@@ -10,6 +10,13 @@ export const SCHEMA_VERSION = 1;
 
 export type MeetingMode = "demo" | "live";
 
+/**
+ * AIZ-30/AIZ-31 — origin tag for offline-mode meetings. `undefined`
+ * means a live or demo meeting recorded normally; the import paths set
+ * this so the browser can show a badge later.
+ */
+export type MeetingSource = "transcript-import" | "audio-import";
+
 export interface RunStats {
 	totalBatches: number;
 	totalLatencyMs: number;
@@ -33,6 +40,10 @@ export interface MeetingSnapshot {
 	name?: string;
 	/** AIZ-16: True when the user typed the name. AI re-proposals are skipped while true. */
 	nameLockedByUser?: boolean;
+	/** AIZ-30/31: present when the meeting was imported rather than captured live. */
+	source?: MeetingSource;
+	/** AIZ-30/31: original filename for imported meetings. Basename only. */
+	sourceFile?: string;
 }
 
 export interface MeetingMeta {
@@ -59,6 +70,8 @@ export interface BuildSnapshotInput {
 	stats: RunStats;
 	name?: string;
 	nameLockedByUser?: boolean;
+	source?: MeetingSource;
+	sourceFile?: string;
 }
 
 function uuid(): string {
@@ -91,6 +104,8 @@ export function buildSnapshot(input: BuildSnapshotInput): MeetingSnapshot {
 	if (input.name !== undefined) snap.name = input.name;
 	if (input.nameLockedByUser !== undefined)
 		snap.nameLockedByUser = input.nameLockedByUser;
+	if (input.source !== undefined) snap.source = input.source;
+	if (input.sourceFile !== undefined) snap.sourceFile = input.sourceFile;
 	return snap;
 }
 
