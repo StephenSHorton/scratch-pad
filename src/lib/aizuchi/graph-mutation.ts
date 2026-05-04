@@ -56,6 +56,7 @@ export async function mutateGraph(
 	const { diff: normalizedDiff, report } = normalizeDiff(
 		currentGraph,
 		result.object,
+		opts.extractionMode,
 	);
 
 	return {

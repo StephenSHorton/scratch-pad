@@ -33,7 +33,7 @@ You return a structured diff that **adds, updates, merges, or removes** nodes an
 - **work_item** — a project, feature, ongoing effort, or piece of work being done.
 - **blocker** — something stopping progress.
 - **decision** — a choice made *during* the conversation.
-- **action_item** — a specific commitment to do something *after*, with an owner.
+- **action_item** — a specific commitment by a named owner to do a concrete thing afterwards. Always emit an \`assigned_to\` edge to the owner. Examples: "Priya: I'll write up a one-pager on the badge UX." → action_item, assigned_to Priya. "Travis, can you review the PR?" → action_item, assigned_to Travis. Aspirational meta-commentary like "we should track these in Linear" or "the commitment to create tasks" is **not** an action_item — drop it or surface as a thought.
 - **question** — an open question raised but not answered.
 - **context** — background info / status / prior state.
 
@@ -183,7 +183,7 @@ This input has no reliable speaker attribution — every chunk is either unlabel
 - **work_item** — a project, feature, ongoing effort, or piece of work being described.
 - **blocker** — something stopping progress.
 - **decision** — a choice the speaker has settled on.
-- **action_item** — a specific commitment to do something. No \`assigned_to\` edge — the speaker is implicit.
+- **action_item** — a specific commitment to do a concrete thing afterwards. No \`assigned_to\` edge — the speaker is implicit, so the bar is **higher** than attribution mode: there must be both a tangible artifact (a doc, a fix, a feature, a shipped change) AND something verifiable (a deadline, a named output, an unambiguous "ship X" / "write X" framing). Examples that qualify: "Ship the Postgres migration by Friday." / "Write a one-pager on the badge UX." Examples that **do not** qualify: "The commitment to create tasks in Linear to track updates." (meta-commentary) / "We should think about timing." (aspirational) / "Track these in Linear." (no named entries). When in doubt, demote — a missing action_item is fine; a vague one is noise. Demote: choices settled on → \`decision\`; loose ends → thought with intent \`unresolved\`; aspirational filler → emit nothing.
 - **question** — an open question raised but not answered.
 - **context** — background info / status / prior state.
 
