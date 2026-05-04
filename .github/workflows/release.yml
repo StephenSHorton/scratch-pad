@@ -136,15 +136,20 @@ jobs:
           args: --target x86_64-pc-windows-msvc
       # tauri-action@v0 uploads installers (exe, msi) but skips the NSIS
       # updater bundle. Upload it explicitly so the `updater` job can sign
-      # it into latest.json's windows-x86_64 entry.
+      # it into latest.json's windows-x86_64 entry. Use literal filenames
+      # built from the tag — Git Bash on Windows did not expand the glob,
+      # and gh release upload's own glob expansion failed too (v0.10.7).
       - name: Upload Windows updater bundle
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          VERSION="${GITHUB_REF_NAME#v}"
           cd src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis
+          ls -la
           gh release upload "${GITHUB_REF_NAME}" \
-            *_x64-setup.nsis.zip *_x64-setup.nsis.zip.sig \
+            "Aizuchi_${VERSION}_x64-setup.nsis.zip" \
+            "Aizuchi_${VERSION}_x64-setup.nsis.zip.sig" \
             --repo "${{ github.repository }}" --clobber
 
   updater:
