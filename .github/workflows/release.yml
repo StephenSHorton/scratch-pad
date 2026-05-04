@@ -134,24 +134,6 @@ jobs:
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: --target x86_64-pc-windows-msvc
-      # tauri-action@v0 uploads installers (exe, msi) but skips the NSIS
-      # updater bundle. Upload it explicitly so the `updater` job can sign
-      # it into latest.json's windows-x86_64 entry. Use literal filenames
-      # built from the tag — Git Bash on Windows did not expand the glob,
-      # and gh release upload's own glob expansion failed too (v0.10.7).
-      - name: Upload Windows updater bundle
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          cd src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis
-          ls -la
-          gh release upload "${GITHUB_REF_NAME}" \
-            "Aizuchi_${VERSION}_x64-setup.nsis.zip" \
-            "Aizuchi_${VERSION}_x64-setup.nsis.zip.sig" \
-            --repo "${{ github.repository }}" --clobber
-
   updater:
     needs: [build-aarch64, build-x64, build-windows, build-linux]
     runs-on: ubuntu-latest
@@ -175,10 +157,14 @@ jobs:
           PUB_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           REPO="https://github.com/${{ github.repository }}"
 
-          # Download the bundles from the release
+          # Download the bundles from the release. With createUpdaterArtifacts
+          # enabled in tauri.conf.json, Tauri produces .sig files during build
+          # and tauri-action uploads them. We only need the .app.tar.gz to
+          # re-sign on Mac (kept for parity with how the workflow originally
+          # worked), and the Windows .exe.sig directly.
           mkdir -p bundles
           gh release download "$TAG" --repo "${{ github.repository }}" --pattern "*.app.tar.gz" --dir bundles
-          gh release download "$TAG" --repo "${{ github.repository }}" --pattern "*.nsis.zip" --dir bundles || echo "No NSIS bundle found (Windows build may still be running)"
+          gh release download "$TAG" --repo "${{ github.repository }}" --pattern "*_x64-setup.exe.sig" --dir bundles || echo "No Windows .exe.sig (Windows build may still be running)"
           echo "Downloaded bundles:"
           ls -la bundles/
 
@@ -195,19 +181,19 @@ jobs:
           echo "aarch64 sig length: ${#AARCH64_SIG}"
           echo "x64 sig length: ${#X64_SIG}"
 
-          # Sign Windows NSIS bundle if present
+          # Read the Windows updater signature created by Tauri during build
+          # (createUpdaterArtifacts: true). The .exe is reused as the updater
+          # bundle in v2 mode, and the .sig is uploaded by tauri-action.
           WIN_PLATFORM=""
-          NSIS_FILE=$(ls bundles/*_x64-setup.nsis.zip 2>/dev/null | head -1)
-          if [ -n "$NSIS_FILE" ]; then
-            cargo tauri signer sign "$NSIS_FILE" --private-key-path <(echo "$TAURI_SIGNING_PRIVATE_KEY") --password "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" 2>/dev/null || \
-            cargo tauri signer sign "$NSIS_FILE" -k "$TAURI_SIGNING_PRIVATE_KEY" -p "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
-            WIN_SIG=$(cat "${NSIS_FILE}.sig")
-            NSIS_BASENAME=$(basename "$NSIS_FILE")
+          WIN_SIG_FILE=$(ls bundles/*_x64-setup.exe.sig 2>/dev/null | head -1)
+          if [ -n "$WIN_SIG_FILE" ]; then
+            WIN_SIG=$(cat "$WIN_SIG_FILE")
+            WIN_BASENAME=$(basename "$WIN_SIG_FILE" .sig)
             echo "Windows sig length: ${#WIN_SIG}"
             WIN_PLATFORM=$(cat <<WINEOF
               ,"windows-x86_64": {
                 "signature": "${WIN_SIG}",
-                "url": "${REPO}/releases/download/${TAG}/${NSIS_BASENAME}"
+                "url": "${REPO}/releases/download/${TAG}/${WIN_BASENAME}"
               }
           WINEOF
             )

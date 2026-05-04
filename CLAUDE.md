@@ -41,7 +41,7 @@ git push origin main --tags
 The release workflow:
 1. `create-release` opens a draft GitHub Release for the tag
 2. Four parallel build jobs (macOS ARM, macOS Intel, Linux, Windows) build the app, the MCP sidecar for that platform, and upload artifacts to the draft release
-3. `updater` waits for all four, signs the `.app.tar.gz` and `.nsis.zip` bundles, generates `latest.json`, and promotes the draft to published
+3. `updater` waits for all four, builds `latest.json` from the `.app.tar.gz.sig` and `.exe.sig` files Tauri produces during build (`bundle.createUpdaterArtifacts: true` in `tauri.conf.json`), and promotes the draft to published
 
 ## Code style
 
