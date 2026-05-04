@@ -23,6 +23,7 @@ import {
 	buildSnapshot,
 	loadSnapshot,
 	type MeetingSnapshot,
+	type MeetingSource,
 	newMeetingId,
 	saveSnapshot,
 } from "@/lib/aizuchi/persistence";
@@ -72,7 +73,7 @@ export type Status =
 	| "error"
 	| "archived";
 
-export type Mode = "idle" | "demo" | "live";
+export type Mode = "idle" | "demo" | "live" | "import";
 
 export interface RunStats {
 	totalBatches: number;
@@ -111,6 +112,7 @@ export interface MeetingSession {
 	startLive: () => Promise<void>;
 	resumeLive: () => Promise<void>;
 	stopLive: () => Promise<void>;
+	startImport: (chunks: TranscriptChunk[], sourceFile: string) => Promise<void>;
 	pauseDemo: () => void;
 	resumeDemo: () => void;
 	resetDemo: () => void;
@@ -161,6 +163,10 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 	const lastNameProposeAtRef = useRef(0);
 	const lastNameProposeBatchRef = useRef(0);
 	const namingInFlightRef = useRef(false);
+	// AIZ-30 — origin tag for offline-import meetings. Set in startImport,
+	// read by saveCurrentMeeting so the snapshot carries the source field.
+	const sourceRef = useRef<MeetingSource | undefined>(undefined);
+	const sourceFileRef = useRef<string | undefined>(undefined);
 	// Holds the latest saveCurrentMeeting impl so the audio-phase listener
 	// (registered once) can always call the current version.
 	const saveCurrentMeetingRef = useRef<
@@ -261,6 +267,8 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		lastNameProposeAtRef.current = 0;
 		lastNameProposeBatchRef.current = 0;
 		namingInFlightRef.current = false;
+		sourceRef.current = undefined;
+		sourceFileRef.current = undefined;
 		setName(null);
 		setNameLockedByUser(false);
 		emitGraph(startGraph);
@@ -288,6 +296,8 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 				stats: statsRef.current,
 				name: nameRef.current ?? undefined,
 				nameLockedByUser: nameLockedRef.current,
+				source: sourceRef.current,
+				sourceFile: sourceFileRef.current,
 			});
 			const id = await saveSnapshot(snap);
 			console.log(`[meeting] saved snapshot ${id}`);
@@ -366,9 +376,7 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		setNameLockedByUser(snap.nameLockedByUser ?? false);
 		// The outline window may mount after us — retry the graph emit a
 		// few times so it picks up the saved state regardless of order.
-		[200, 700, 1500].forEach((d) =>
-			setTimeout(() => emitGraph(snap.graph), d),
-		);
+		[200, 700, 1500].forEach((d) => setTimeout(() => emitGraph(snap.graph), d));
 	};
 
 	useEffect(() => {
@@ -461,17 +469,28 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		let idx = 0;
 		const signal = signalRef.current;
 		const isLive = nextMode === "live";
+		const isImport = nextMode === "import";
+		const dlog = isImport
+			? (msg: string) =>
+					invoke("log_from_frontend", { msg: `[import] ${msg}` }).catch(
+						() => {},
+					)
+			: (_msg: string) => {};
 
 		try {
 			if (isLive) {
 				console.log("[meeting-live] subscribing to transcript-chunk events…");
 			}
+			dlog("runSession: starting batch loop");
 			for await (const batch of source) {
 				if (isLive) {
 					console.log(
 						`[meeting-live] batch ${idx + 1}: ${batch.chunks.length} chunks, ${batch.wordCount} words`,
 					);
 				}
+				dlog(
+					`batch ${idx + 1}: ${batch.chunks.length} chunks, ${batch.wordCount} words`,
+				);
 				if (signal.cancelled) return;
 
 				idx++;
@@ -507,7 +526,8 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 					totalBatches: idx,
 					totalLatencyMs: statsRef.current.totalLatencyMs + result.latencyMs,
 					totalInputTokens:
-						statsRef.current.totalInputTokens + (result.usage?.inputTokens ?? 0),
+						statsRef.current.totalInputTokens +
+						(result.usage?.inputTokens ?? 0),
 					totalOutputTokens:
 						statsRef.current.totalOutputTokens +
 						(result.usage?.outputTokens ?? 0),
@@ -522,9 +542,18 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 				setHighlightIds(new Set());
 			}
 			// Demo iterates a finite fixture and reaches "done"; live streams
-			// indefinitely and is ended via stopLive().
+			// indefinitely and is ended via stopLive(). Import is finite too —
+			// persists as `mode: "live"` because the captured shape matches a
+			// live meeting; `source` distinguishes the origin.
 			if (!signal.cancelled && nextMode === "demo") {
 				await saveCurrentMeeting("demo");
+				setStatus("done");
+			} else if (!signal.cancelled && nextMode === "import") {
+				dlog(`loop done after ${idx} batches; saving snapshot`);
+				const savedId = await saveCurrentMeeting("live");
+				dlog(`saved snapshot id=${savedId ?? "<none>"}`);
+				setMode("idle");
+				modeRef.current = "idle";
 				setStatus("done");
 			}
 		} catch (err) {
@@ -533,11 +562,51 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 				isLive ? "Aizuchi live batch failed" : "Aizuchi batch failed",
 				err,
 			);
-			setError(err instanceof Error ? err.message : String(err));
+			const message = err instanceof Error ? err.message : String(err);
+			dlog(`runSession error: ${message}`);
+			setError(message);
 			setStatus("error");
 		} finally {
 			runningRef.current = false;
 		}
+	};
+
+	const startImport = async (chunks: TranscriptChunk[], sourceFile: string) => {
+		const dlog = (msg: string) =>
+			invoke("log_from_frontend", { msg: `[import] ${msg}` }).catch(() => {});
+		dlog(`startImport: chunks=${chunks.length} sourceFile=${sourceFile}`);
+		if (runningRef.current) {
+			dlog("startImport bailed: runningRef already true");
+			return;
+		}
+		if (chunks.length === 0) {
+			console.warn("[meeting-import] no chunks to import");
+			return;
+		}
+		runningRef.current = true;
+		const startGraph = resetSessionState("import");
+		// AIZ-26 — adopt the route's `:id` so the IPC-allocated id and the
+		// saved snapshot file line up. Same rationale as startDemo / startLive.
+		meetingIdRef.current = meetingId === "test" ? newMeetingId() : meetingId;
+		startedAtRef.current = Date.now();
+		sessionSavedRef.current = false;
+		sourceRef.current = "transcript-import";
+		sourceFileRef.current = sourceFile;
+		dlog(`startImport ready: meetingId=${meetingIdRef.current}`);
+		// `speedMultiplier: Infinity` zeroes out the pacing sleep — chunks
+		// flow through batching as fast as the model returns. Existing batch
+		// thresholds (size + simulated time) still apply, so each LLM call
+		// gets a coherent slice rather than the whole transcript at once.
+		// `onChunk: pushChunk` surfaces chunks in the transcript panel as
+		// each batch flushes, mirroring the demo / live shape.
+		const source = feedTranscriptBatches(chunks, {
+			sizeThresholdWords: SIZE_THRESHOLD_WORDS,
+			timeThresholdMs: TIME_THRESHOLD_MS,
+			speedMultiplier: Number.POSITIVE_INFINITY,
+			signal: signalRef.current,
+			onChunk: pushChunk,
+		});
+		await runSession(source, "import", startGraph);
 	};
 
 	const startDemo = async () => {
@@ -783,6 +852,7 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		startLive,
 		resumeLive,
 		stopLive,
+		startImport,
 		pauseDemo,
 		resumeDemo,
 		resetDemo,

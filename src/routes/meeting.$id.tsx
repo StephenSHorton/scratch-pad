@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
 	ReactFlowProvider,
@@ -19,6 +20,7 @@ import type {
 	Node as AzNode,
 	Graph,
 	NodeType,
+	TranscriptChunk,
 } from "@/lib/aizuchi/schemas";
 
 const COLUMN_X: Record<NodeType, number> = {
@@ -88,7 +90,8 @@ function MeetingPrototype() {
 		if (autostartFiredRef.current) return;
 		const params = new URLSearchParams(window.location.search);
 		const autostart = params.get("autostart");
-		if (autostart !== "live" && autostart !== "demo") return;
+		if (autostart !== "live" && autostart !== "demo" && autostart !== "import")
+			return;
 		// Defer so the session hook has finished its initial setup. The
 		// hook also guards against double-start via runningRef. Set the
 		// fired-ref *inside* the timeout, not before — under React strict
@@ -101,10 +104,31 @@ function MeetingPrototype() {
 				session.startLive().catch((err) => {
 					console.error("[meeting] autostart live failed", err);
 				});
-			} else {
+			} else if (autostart === "demo") {
 				session.startDemo().catch((err) => {
 					console.error("[meeting] autostart demo failed", err);
 				});
+			} else {
+				// AIZ-30 — pop the chunks staged by the IPC import endpoint
+				// and feed them to startImport. `take_pending_import` returns
+				// `null` if the id has no entry (already consumed, or never
+				// staged) — in that case there's nothing to do.
+				invoke<{ chunks: TranscriptChunk[]; sourceFile: string } | null>(
+					"take_pending_import",
+					{ id },
+				)
+					.then((pending) => {
+						if (!pending) {
+							console.warn(
+								`[meeting] no pending import for ${id} — nothing to do`,
+							);
+							return;
+						}
+						return session.startImport(pending.chunks, pending.sourceFile);
+					})
+					.catch((err) => {
+						console.error("[meeting] autostart import failed", err);
+					});
 			}
 		}, 100);
 		return () => clearTimeout(handle);

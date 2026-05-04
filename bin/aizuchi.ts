@@ -484,7 +484,7 @@ cli
 cli
 	.command(
 		"meeting <subcommand> [id] [arg]",
-		"Manage meetings (start|stop|ls|open|resume|rm|rename)",
+		"Manage meetings (start|stop|ls|open|resume|rm|rename|import)",
 	)
 	.option("--mode <mode>", "live or demo", { default: "live" })
 	.option("--force", "Reserved for symmetry with `pad rm` (currently no-op)")
@@ -507,10 +507,11 @@ cli
 				"resume",
 				"rm",
 				"rename",
+				"import",
 			]);
 			if (!known.has(subcommand)) {
 				process.stderr.write(
-					`aizuchi: unknown meeting subcommand '${subcommand}'. Try: start, stop, ls, open, resume, rm, rename.\n`,
+					`aizuchi: unknown meeting subcommand '${subcommand}'. Try: start, stop, ls, open, resume, rm, rename, import.\n`,
 				);
 				process.exit(2);
 			}
@@ -530,6 +531,14 @@ cli
 			if (subcommand === "rename" && (arg === undefined || arg === "")) {
 				process.stderr.write(
 					"aizuchi: meeting rename requires a non-empty name.\n",
+				);
+				process.exit(1);
+			}
+			// `meeting import <path>` reuses the [id] positional as the
+			// path so we don't need a separate command shape.
+			if (subcommand === "import" && (id === undefined || id === "")) {
+				process.stderr.write(
+					"aizuchi: meeting import requires a path to a transcript file (.txt / .md / .json).\n",
 				);
 				process.exit(1);
 			}
@@ -623,6 +632,32 @@ cli
 							}
 							throw e;
 						}
+						return;
+					}
+					case "import": {
+						if (!id) {
+							process.stderr.write(
+								"aizuchi: meeting import requires a path to a transcript file (.txt / .md / .json).\n",
+							);
+							process.exit(1);
+						}
+						const filePath = path.resolve(id);
+						let content: string;
+						try {
+							content = await fs.readFile(filePath, "utf-8");
+						} catch (e) {
+							process.stderr.write(
+								`aizuchi: failed to read ${filePath}: ${e instanceof Error ? e.message : String(e)}\n`,
+							);
+							process.exit(1);
+						}
+						const filename = path.basename(filePath);
+						const result = await client.importMeeting({ content, filename });
+						if (flags.json) emitJson(result);
+						else
+							process.stdout.write(
+								`Imported ${result.chunkCount} chunk(s) from ${result.sourceFile} as ${result.id}. Window opened.\n`,
+							);
 						return;
 					}
 					case "rename": {

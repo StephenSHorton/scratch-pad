@@ -41,6 +41,7 @@
 		"@tanstack/react-router": "^1.162.8",
 		"@tauri-apps/api": "^2.11.0",
 		"@tauri-apps/plugin-autostart": "^2.5.1",
+		"@tauri-apps/plugin-dialog": "^2.7.1",
 		"@tauri-apps/plugin-opener": "^2.5.4",
 		"@tauri-apps/plugin-updater": "^2.10.1",
 		"@xyflow/react": "^12.10.1",

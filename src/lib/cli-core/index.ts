@@ -22,6 +22,8 @@ export {
 export type {
 	AppStatus,
 	CreatePadInput,
+	ImportMeetingInput,
+	ImportMeetingResponse,
 	IpcConfig,
 	ListPadsOptions,
 	MeetingMeta,

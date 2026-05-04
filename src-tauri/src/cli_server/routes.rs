@@ -143,6 +143,11 @@ async fn route(
         (Method::POST, ["meetings"]) => handlers::meetings::start(ctx, &body).await,
         (_, ["meetings"]) => Err(IpcError::MethodNotAllowed),
 
+        // AIZ-30 — must come before the `["meetings", id]` arm so "import"
+        // isn't matched as a meeting id.
+        (Method::POST, ["meetings", "import"]) => handlers::meetings::import(ctx, &body).await,
+        (_, ["meetings", "import"]) => Err(IpcError::MethodNotAllowed),
+
         (Method::GET, ["meetings", id]) => handlers::meetings::get(ctx, id).await,
         (Method::PATCH, ["meetings", id]) => handlers::meetings::patch(ctx, id, &body).await,
         (Method::DELETE, ["meetings", id]) => handlers::meetings::delete(ctx, id).await,

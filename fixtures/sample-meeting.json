@@ -1,0 +1,15 @@
+[
+  { "speaker": "Travis", "t": 0.0, "text": "Alright, let's start the standup. I want to talk through the import feature today since we just shipped the transcript parser." },
+  { "speaker": "Priya", "t": 9.5, "text": "Sounds good. I had one concern looking at the diff — the snapshot mode field. We're saving imports as mode 'live', right?" },
+  { "speaker": "Travis", "t": 18.0, "text": "Yeah. The reasoning is the captured shape matches a live meeting — graph, transcript, thoughts, all the same. The new 'source' field is what distinguishes the origin. That way the meeting browser doesn't have to special-case anything." },
+  { "speaker": "Priya", "t": 32.0, "text": "Makes sense. Does the browser surface the source anywhere yet?" },
+  { "speaker": "Travis", "t": 36.0, "text": "Not yet. The data is on disk so we can add a badge later. Out of scope for this ticket, in the next one if anyone's bothered." },
+  { "speaker": "Sam", "t": 45.0, "text": "Speaking of next ones — what's the ETA on audio import? AIZ-31?" },
+  { "speaker": "Travis", "t": 50.0, "text": "After we live with transcript import for a bit. Want to make sure the extraction loop holds up under offline pacing before adding the ASR layer on top." },
+  { "speaker": "Priya", "t": 60.0, "text": "One more thing — how do unlabeled chunks behave? Like a podcast transcript with no speaker tags." },
+  { "speaker": "Travis", "t": 67.0, "text": "They get speaker 'unknown'. The re-evaluation architecture from AIZ-9 handles solo monologue fine, so a podcast should produce a coherent graph. We can revisit if real podcasts surface edge cases." },
+  { "speaker": "Sam", "t": 80.0, "text": "Got it. Anything blocking?" },
+  { "speaker": "Travis", "t": 83.0, "text": "Code-signing for macOS is still open. Not blocking import work, but users who download from the landing page still see the quarantine warning. Different ticket, AIZ-29." },
+  { "speaker": "Priya", "t": 95.0, "text": "OK. I'll write up a one-pager on the badge UX so we're ready when we want to ship it." },
+  { "speaker": "Travis", "t": 102.0, "text": "Perfect. Let's wrap." }
+]

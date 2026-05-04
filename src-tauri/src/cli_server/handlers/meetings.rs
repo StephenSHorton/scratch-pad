@@ -41,6 +41,7 @@ use tauri::{Emitter, Manager};
 use crate::cli_server::error::{json_response, no_content, IpcError};
 use crate::cli_server::IpcCtx;
 use crate::meetings::{self, MeetingMeta};
+use crate::transcript_import;
 
 // ---------------------------------------------------------------------------
 // GET /v1/meetings
@@ -193,6 +194,58 @@ pub async fn start(
         },
     ))
 }
+
+// ---------------------------------------------------------------------------
+// POST /v1/meetings/import — AIZ-30 transcript import
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct ImportMeetingBody {
+    /// Raw transcript content. CLI reads the file; palette reads via FileReader.
+    /// Server-side filesystem access is intentionally out of scope so the
+    /// endpoint stays format-agnostic and sandbox-friendly.
+    content: String,
+    /// Original filename, used for extension dispatch and surfaced in the
+    /// snapshot's `sourceFile` field.
+    filename: String,
+}
+
+#[derive(Serialize)]
+struct ImportMeetingResponse {
+    id: String,
+    #[serde(rename = "openedWindow")]
+    opened_window: bool,
+    #[serde(rename = "chunkCount")]
+    chunk_count: usize,
+    #[serde(rename = "sourceFile")]
+    source_file: String,
+}
+
+pub async fn import(
+    ctx: &Arc<IpcCtx>,
+    body: &Bytes,
+) -> Result<Response<Full<Bytes>>, IpcError> {
+    let payload: ImportMeetingBody = serde_json::from_slice(body)
+        .map_err(|e| IpcError::ValidationError(format!("body: {e}")))?;
+
+    let staged =
+        transcript_import::stage_pending_import(&ctx.app, &payload.content, &payload.filename)
+            .map_err(IpcError::ValidationError)?;
+
+    Ok(json_response(
+        StatusCode::OK,
+        &ImportMeetingResponse {
+            id: staged.id,
+            opened_window: true,
+            chunk_count: staged.chunk_count,
+            source_file: staged.source_file,
+        },
+    ))
+}
+
+// The matching pop happens inside the meeting window via the Tauri
+// command `take_pending_import` (see lib.rs). Same process, same managed
+// state, no extra IPC hop needed.
 
 // ---------------------------------------------------------------------------
 // POST /v1/meetings/:id/stop

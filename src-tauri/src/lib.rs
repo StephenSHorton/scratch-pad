@@ -2,6 +2,7 @@ mod audio;
 mod cli_server;
 mod meetings;
 mod network;
+mod transcript_import;
 
 use chrono::{DateTime, Utc};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
@@ -634,6 +635,58 @@ fn delete_meeting(id: String) -> Result<(), String> {
 #[tauri::command]
 fn open_meeting(app: AppHandle, id: Option<String>) {
     open_meeting_window(&app, id.as_deref());
+}
+
+/// AIZ-30 — pop the chunks staged by `POST /v1/meetings/import` for the
+/// meeting window mounting at `?autostart=import`. Returns `None` when the
+/// id has no pending entry (already consumed, or never staged).
+#[tauri::command]
+fn take_pending_import(
+    id: String,
+    state: tauri::State<'_, transcript_import::PendingImportsState>,
+) -> Option<transcript_import::PendingImport> {
+    log(&format!("[import] take_pending_import called for id={id}"));
+    let mut map = match state.map.lock() {
+        Ok(m) => m,
+        Err(_) => {
+            log("[import] take_pending_import: lock poisoned");
+            return None;
+        }
+    };
+    let popped = map.remove(&id);
+    match &popped {
+        Some(p) => log(&format!(
+            "[import] take_pending_import: popped {} chunks (sourceFile={})",
+            p.chunks.len(),
+            p.source_file
+        )),
+        None => log(&format!(
+            "[import] take_pending_import: no entry for id={id} (already consumed or never staged)"
+        )),
+    }
+    popped
+}
+
+/// Diagnostic. Lets the webview write into the Rust log so React-side
+/// progress is visible during dev (the webview console doesn't pipe to
+/// the dev server stdout).
+#[tauri::command]
+fn log_from_frontend(msg: String) {
+    log(&format!("[frontend] {msg}"));
+}
+
+/// AIZ-30 — palette flow. Reads a user-selected file off disk, parses it
+/// as a transcript, and stages the chunks for the freshly-opened meeting
+/// window. The path is whatever the dialog plugin returned; we trust it
+/// because the user picked it interactively.
+#[tauri::command]
+fn import_meeting_from_path(
+    app: AppHandle,
+    path: String,
+) -> Result<transcript_import::StagedImport, String> {
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| format!("read {path}: {e}"))?;
+    transcript_import::stage_pending_import(&app, &content, &path)
 }
 
 // ---------------------------------------------------------------------------
@@ -1361,12 +1414,14 @@ pub fn run() {
             capture: Mutex::new(None),
             phase: Mutex::new(("idle".to_string(), "Ready".to_string())),
         })
+        .manage(transcript_import::PendingImportsState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             None,
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             get_note,
             dismiss_note,
@@ -1402,6 +1457,9 @@ pub fn run() {
             load_meeting,
             delete_meeting,
             open_meeting,
+            take_pending_import,
+            import_meeting_from_path,
+            log_from_frontend,
         ])
         .setup(|app| {
             // Build the macOS menu bar
