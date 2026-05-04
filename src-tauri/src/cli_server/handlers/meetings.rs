@@ -38,6 +38,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{Emitter, Manager};
 
+use crate::audio_import;
 use crate::cli_server::error::{json_response, no_content, IpcError};
 use crate::cli_server::IpcCtx;
 use crate::meetings::{self, MeetingMeta};
@@ -246,6 +247,49 @@ pub async fn import(
 // The matching pop happens inside the meeting window via the Tauri
 // command `take_pending_import` (see lib.rs). Same process, same managed
 // state, no extra IPC hop needed.
+
+// ---------------------------------------------------------------------------
+// POST /v1/meetings/import-audio — AIZ-31 audio import
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportAudioMeetingBody {
+    /// Absolute path to a media file (`.wav`, `.mp3`, `.m4a`, `.flac`,
+    /// `.mp4`, `.mov`). Video files are decoded for their audio track;
+    /// the video stream is ignored. We deliberately take a path rather
+    /// than a binary blob — media files routinely exceed the 1 MB
+    /// request-body cap, and the CLI is already bound to localhost-only
+    /// so there's no sandbox crossing.
+    path: String,
+}
+
+pub async fn import_audio(
+    ctx: &Arc<IpcCtx>,
+    body: &Bytes,
+) -> Result<Response<Full<Bytes>>, IpcError> {
+    let payload: ImportAudioMeetingBody = serde_json::from_slice(body)
+        .map_err(|e| IpcError::ValidationError(format!("body: {e}")))?;
+
+    let app = ctx.app.clone();
+    let path_buf = std::path::PathBuf::from(&payload.path);
+    let staged = tauri::async_runtime::spawn_blocking(move || {
+        audio_import::stage_pending_audio_import(&app, &path_buf)
+    })
+    .await
+    .map_err(|e| IpcError::Internal(format!("audio import join: {e}")))?
+    .map_err(IpcError::ValidationError)?;
+
+    Ok(json_response(
+        StatusCode::OK,
+        &ImportMeetingResponse {
+            id: staged.id,
+            opened_window: true,
+            chunk_count: staged.chunk_count,
+            source_file: staged.source_file,
+        },
+    ))
+}
 
 // ---------------------------------------------------------------------------
 // POST /v1/meetings/:id/stop

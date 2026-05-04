@@ -1,4 +1,5 @@
 mod audio;
+mod audio_import;
 mod cli_server;
 mod meetings;
 mod network;
@@ -687,6 +688,23 @@ fn import_meeting_from_path(
     let content = std::fs::read_to_string(&path)
         .map_err(|e| format!("read {path}: {e}"))?;
     transcript_import::stage_pending_import(&app, &content, &path)
+}
+
+/// AIZ-31 — palette / CLI flow for offline audio import. Runs whisper on
+/// the file, then stages the resulting chunks via the same path
+/// `import_meeting_from_path` uses. Blocking on whisper inference; the
+/// Tauri runtime offloads to a worker thread because this is `async fn`.
+#[tauri::command]
+async fn import_audio_meeting_from_path(
+    app: AppHandle,
+    path: String,
+) -> Result<transcript_import::StagedImport, String> {
+    let path_buf = std::path::PathBuf::from(&path);
+    tauri::async_runtime::spawn_blocking(move || {
+        audio_import::stage_pending_audio_import(&app, &path_buf)
+    })
+    .await
+    .map_err(|e| format!("audio import task failed: {e}"))?
 }
 
 // ---------------------------------------------------------------------------
@@ -1459,6 +1477,7 @@ pub fn run() {
             open_meeting,
             take_pending_import,
             import_meeting_from_path,
+            import_audio_meeting_from_path,
             log_from_frontend,
         ])
         .setup(|app| {

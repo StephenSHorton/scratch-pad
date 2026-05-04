@@ -38,7 +38,7 @@ const ACTIONS: Action[] = [
 		id: "import_meeting",
 		label: "Import meeting…",
 		description:
-			"Process a transcript file (.txt / .md / .json) as a meeting — no realtime pacing",
+			"Process a transcript or recording (.txt / .md / .json / .wav / .mp3 / .m4a / .flac / .mp4 / .mov) as a meeting",
 	},
 	{
 		id: "new_pad",
@@ -142,6 +142,11 @@ export function Palette() {
 	const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(
 		null,
 	);
+	// AIZ-31 — when set, the palette renders a "transcribing…" card instead
+	// of the usual command list, and the focus-blur auto-close is suppressed
+	// so the file picker / long-running whisper run can't dismiss it midway.
+	const [importingFile, setImportingFile] = useState<string | null>(null);
+	const importingRef = useRef(false);
 	const inputRef = useRef<HTMLInputElement>(null);
 	const browseInputRef = useRef<HTMLInputElement>(null);
 	const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -231,7 +236,9 @@ export function Palette() {
 	useEffect(() => {
 		const win = getCurrentWindow();
 		const unlisten = win.onFocusChanged(({ payload: focused }) => {
-			if (!focused) beginClose();
+			// While an import is in flight (file picker open OR whisper running),
+			// keep the palette visible so the user can see the transcribing card.
+			if (!focused && !importingRef.current) beginClose();
 		});
 		return () => {
 			unlisten.then((fn) => fn()).catch(() => {});
@@ -298,28 +305,45 @@ export function Palette() {
 			return;
 		}
 		if (id === "import_meeting") {
-			// Close the palette first so the file picker takes focus, then
-			// open the dialog. Errors and cancellations are silent — the
-			// user can re-trigger from the palette.
-			beginClose();
+			// AIZ-31 — keep the palette open during the file picker and the
+			// subsequent (potentially multi-minute) whisper run so the user
+			// has a visible "transcribing…" indicator. Suppress focus-blur
+			// auto-close while the import is in flight.
+			const audioVideoExts = ["wav", "mp3", "m4a", "flac", "mp4", "mov"];
+			importingRef.current = true;
 			openDialog({
 				multiple: false,
 				directory: false,
-				title: "Import meeting transcript",
+				title: "Import meeting (transcript or recording)",
 				filters: [
 					{
-						name: "Transcript",
-						extensions: ["txt", "md", "json"],
+						name: "Transcript or recording",
+						extensions: ["txt", "md", "json", ...audioVideoExts],
 					},
 				],
 			})
 				.then((selected) => {
-					if (typeof selected !== "string") return;
+					if (typeof selected !== "string") {
+						// Cancelled — drop the suppression and dismiss.
+						importingRef.current = false;
+						beginClose();
+						return undefined;
+					}
+					const lower = selected.toLowerCase();
+					const isAudioVideo = audioVideoExts.some((ext) =>
+						lower.endsWith(`.${ext}`),
+					);
+					const filename =
+						selected.split(/[/\\]/).pop() ?? selected;
+					if (isAudioVideo) setImportingFile(filename);
+					const command = isAudioVideo
+						? "import_audio_meeting_from_path"
+						: "import_meeting_from_path";
 					return invoke<{
 						id: string;
 						chunkCount: number;
 						sourceFile: string;
-					}>("import_meeting_from_path", { path: selected });
+					}>(command, { path: selected });
 				})
 				.then((result) => {
 					if (result) {
@@ -330,6 +354,11 @@ export function Palette() {
 				})
 				.catch((err) => {
 					console.error("[meeting-import] failed:", err);
+				})
+				.finally(() => {
+					importingRef.current = false;
+					setImportingFile(null);
+					beginClose();
 				});
 			return;
 		}
@@ -423,7 +452,21 @@ export function Palette() {
 					transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
 					className="flex h-screen w-screen flex-col overflow-hidden rounded-[14px] border border-white/10 bg-black/40 text-white shadow-2xl backdrop-blur-2xl"
 				>
-					{view === "main" ? (
+					{importingFile ? (
+						<div className="flex h-full w-full flex-col items-center justify-center px-8 py-10 text-center">
+							<div
+								className="mb-5 h-7 w-7 animate-spin rounded-full border-2 border-white/20 border-t-white/80"
+								aria-hidden="true"
+							/>
+							<div className="text-base text-white/90">
+								Transcribing {importingFile}…
+							</div>
+							<div className="mt-2 text-sm text-white/50">
+								Running whisper locally. This can take a few minutes for long
+								recordings; the meeting window will open when it's done.
+							</div>
+						</div>
+					) : view === "main" ? (
 						<>
 							<input
 								ref={inputRef}

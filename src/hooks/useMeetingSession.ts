@@ -117,6 +117,7 @@ export interface MeetingSession {
 		chunks: TranscriptChunk[],
 		sourceFile: string,
 		extractionMode: ExtractionMode,
+		source?: MeetingSource,
 	) => Promise<void>;
 	pauseDemo: () => void;
 	resumeDemo: () => void;
@@ -586,11 +587,12 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		chunks: TranscriptChunk[],
 		sourceFile: string,
 		extractionMode: ExtractionMode,
+		source: MeetingSource = "transcript-import",
 	) => {
 		const dlog = (msg: string) =>
 			invoke("log_from_frontend", { msg: `[import] ${msg}` }).catch(() => {});
 		dlog(
-			`startImport: chunks=${chunks.length} sourceFile=${sourceFile} mode=${extractionMode}`,
+			`startImport: chunks=${chunks.length} sourceFile=${sourceFile} mode=${extractionMode} source=${source}`,
 		);
 		if (runningRef.current) {
 			dlog("startImport bailed: runningRef already true");
@@ -607,7 +609,7 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		meetingIdRef.current = meetingId === "test" ? newMeetingId() : meetingId;
 		startedAtRef.current = Date.now();
 		sessionSavedRef.current = false;
-		sourceRef.current = "transcript-import";
+		sourceRef.current = source;
 		sourceFileRef.current = sourceFile;
 		extractionModeRef.current = extractionMode;
 		dlog(`startImport ready: meetingId=${meetingIdRef.current}`);
@@ -617,14 +619,14 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		// gets a coherent slice rather than the whole transcript at once.
 		// `onChunk: pushChunk` surfaces chunks in the transcript panel as
 		// each batch flushes, mirroring the demo / live shape.
-		const source = feedTranscriptBatches(chunks, {
+		const batches = feedTranscriptBatches(chunks, {
 			sizeThresholdWords: SIZE_THRESHOLD_WORDS,
 			timeThresholdMs: TIME_THRESHOLD_MS,
 			speedMultiplier: Number.POSITIVE_INFINITY,
 			signal: signalRef.current,
 			onChunk: pushChunk,
 		});
-		await runSession(source, "import", startGraph);
+		await runSession(batches, "import", startGraph);
 	};
 
 	const startDemo = async () => {
