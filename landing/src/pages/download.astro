@@ -64,13 +64,10 @@ const platforms = [
   },
   {
     name: "Linux",
-    tagline: "x86_64 — Debian / Fedora / portable",
+    tagline: "x86_64 — Debian / Fedora",
     primary: { label: "Debian (.deb)", url: findAsset(/\.deb$/i) },
-    alts: [
-      { label: "Fedora (.rpm)", url: findAsset(/\.rpm$/i) },
-      { label: "AppImage", url: findAsset(/\.AppImage$/i) },
-    ],
-    note: "AppImage is portable — chmod +x the file and run. No quarantine workaround needed.",
+    alts: [{ label: "Fedora (.rpm)", url: findAsset(/\.rpm$/i) }],
+    note: 'Install with your package manager — <code class="rounded bg-slate-900/[0.06] px-1.5 py-0.5 font-mono text-[0.8em] text-slate-700 dark:bg-white/[0.08] dark:text-slate-200">sudo apt install ./Aizuchi_*.deb</code> or <code class="rounded bg-slate-900/[0.06] px-1.5 py-0.5 font-mono text-[0.8em] text-slate-700 dark:bg-white/[0.08] dark:text-slate-200">sudo dnf install ./Aizuchi-*.rpm</code>. There is no in-app auto-update on Linux — re-download from this page when a new release ships.',
   },
 ];
 ---
@@ -208,7 +205,7 @@ const platforms = [
           <h3 class="text-sm font-semibold text-slate-900 dark:text-white">Auto-updates</h3>
           <p class="mt-2 text-sm text-slate-600 dark:text-slate-400">
             macOS and Windows update silently in the background via Tauri's signed updater.
-            Linux re-downloads the AppImage for now.
+            Linux installs are managed through your package manager.
           </p>
         </div>
         <div class="border-l border-slate-200 pl-5 dark:border-white/10">
