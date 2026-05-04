@@ -91,9 +91,7 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev \
             patchelf \
-            libasound2-dev \
-            libfuse2 \
-            file
+            libasound2-dev
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
@@ -108,11 +106,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          NO_STRIP: 'true'
-          APPIMAGE_EXTRACT_AND_RUN: '1'
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
-          args: ''
+          args: --bundles deb,rpm
 
   build-windows:
     needs: create-release
