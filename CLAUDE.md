@@ -34,17 +34,14 @@ bun run build:mcp            # Builds MCP sidecar to src-tauri/binaries/
 # 3. Tag and push
 git tag v0.X.0
 git push origin main --tags
-# 4. Wait for GitHub Actions to build (~7 min: build + updater signing)
-# 5. Publish the draft release on GitHub
-gh release edit v0.X.0 --draft=false
+# 4. Wait for GitHub Actions to finish (~12 min: 4 platform builds + updater signing).
+#    The release auto-publishes once the updater job succeeds.
 ```
 
 The release workflow:
-1. Builds DMGs for macOS ARM + Intel (parallel jobs)
-2. Compiles the MCP sidecar binary for each architecture
-3. Signs the `.app.tar.gz` bundles in a separate `updater` job
-4. Generates and uploads `latest.json` with signatures for auto-updates
-5. Creates a draft GitHub Release
+1. `create-release` opens a draft GitHub Release for the tag
+2. Four parallel build jobs (macOS ARM, macOS Intel, Linux, Windows) build the app, the MCP sidecar for that platform, and upload artifacts to the draft release
+3. `updater` waits for all four, signs the `.app.tar.gz` and `.nsis.zip` bundles, generates `latest.json`, and promotes the draft to published
 
 ## Code style
 
