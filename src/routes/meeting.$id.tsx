@@ -15,6 +15,7 @@ import { LiveTranscript } from "@/components/aizuchi/LiveTranscript";
 import { MeetingStatusPanel } from "@/components/aizuchi/MeetingStatusPanel";
 import { useCommandPaletteHotkey } from "@/hooks/useCommandPaletteHotkey";
 import { useMeetingSession } from "@/hooks/useMeetingSession";
+import type { ExtractionMode } from "@/lib/aizuchi/persistence";
 import type {
 	Edge as AzEdge,
 	Node as AzNode,
@@ -113,10 +114,11 @@ function MeetingPrototype() {
 				// and feed them to startImport. `take_pending_import` returns
 				// `null` if the id has no entry (already consumed, or never
 				// staged) — in that case there's nothing to do.
-				invoke<{ chunks: TranscriptChunk[]; sourceFile: string } | null>(
-					"take_pending_import",
-					{ id },
-				)
+				invoke<{
+					chunks: TranscriptChunk[];
+					sourceFile: string;
+					extractionMode: ExtractionMode;
+				} | null>("take_pending_import", { id })
 					.then((pending) => {
 						if (!pending) {
 							console.warn(
@@ -124,7 +126,11 @@ function MeetingPrototype() {
 							);
 							return;
 						}
-						return session.startImport(pending.chunks, pending.sourceFile);
+						return session.startImport(
+							pending.chunks,
+							pending.sourceFile,
+							pending.extractionMode,
+						);
 					})
 					.catch((err) => {
 						console.error("[meeting] autostart import failed", err);

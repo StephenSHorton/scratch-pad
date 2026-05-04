@@ -17,6 +17,14 @@ export type MeetingMode = "demo" | "live";
  */
 export type MeetingSource = "transcript-import" | "audio-import";
 
+/**
+ * AIZ-32 — picks the extraction prompt template. Auto-selected from the
+ * staged transcript on the Rust side: 2+ distinct named speakers →
+ * `attribution`, otherwise `substance`. Live captures default to
+ * `attribution`.
+ */
+export type ExtractionMode = "attribution" | "substance";
+
 export interface RunStats {
 	totalBatches: number;
 	totalLatencyMs: number;
@@ -44,6 +52,8 @@ export interface MeetingSnapshot {
 	source?: MeetingSource;
 	/** AIZ-30/31: original filename for imported meetings. Basename only. */
 	sourceFile?: string;
+	/** AIZ-32: which prompt template the extraction loop ran against. */
+	extractionMode?: ExtractionMode;
 }
 
 export interface MeetingMeta {
@@ -72,6 +82,7 @@ export interface BuildSnapshotInput {
 	nameLockedByUser?: boolean;
 	source?: MeetingSource;
 	sourceFile?: string;
+	extractionMode?: ExtractionMode;
 }
 
 function uuid(): string {
@@ -106,6 +117,8 @@ export function buildSnapshot(input: BuildSnapshotInput): MeetingSnapshot {
 		snap.nameLockedByUser = input.nameLockedByUser;
 	if (input.source !== undefined) snap.source = input.source;
 	if (input.sourceFile !== undefined) snap.sourceFile = input.sourceFile;
+	if (input.extractionMode !== undefined)
+		snap.extractionMode = input.extractionMode;
 	return snap;
 }
 

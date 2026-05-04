@@ -1,6 +1,7 @@
 import { generateObject } from "ai";
-import { normalizeDiff, type NormalizeReport } from "./normalize";
-import { buildUserPrompt, SYSTEM_PROMPT } from "./prompts";
+import { type NormalizeReport, normalizeDiff } from "./normalize";
+import type { ExtractionMode } from "./persistence";
+import { buildUserPrompt, systemPromptFor } from "./prompts";
 import { getProvider, type ProviderName } from "./providers";
 import {
 	type AIThought,
@@ -13,6 +14,8 @@ export interface MutateOptions {
 	provider?: ProviderName;
 	previousThoughts?: AIThought[];
 	recentTranscript?: string;
+	/** AIZ-32 — picks the prompt template. Defaults to `attribution`. */
+	extractionMode?: ExtractionMode;
 }
 
 export interface MutateResult {
@@ -39,7 +42,7 @@ export async function mutateGraph(
 	const result = await generateObject({
 		model: provider.model,
 		schema: GraphDiffSchema,
-		system: SYSTEM_PROMPT,
+		system: systemPromptFor(opts.extractionMode),
 		prompt: buildUserPrompt({
 			currentGraphJson: JSON.stringify(currentGraph, null, 2),
 			previousThoughts: opts.previousThoughts ?? [],

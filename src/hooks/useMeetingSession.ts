@@ -21,6 +21,7 @@ import { generateMeetingNotes } from "@/lib/aizuchi/meeting-notes";
 import { proposeMeetingName } from "@/lib/aizuchi/name-generator";
 import {
 	buildSnapshot,
+	type ExtractionMode,
 	loadSnapshot,
 	type MeetingSnapshot,
 	type MeetingSource,
@@ -112,7 +113,11 @@ export interface MeetingSession {
 	startLive: () => Promise<void>;
 	resumeLive: () => Promise<void>;
 	stopLive: () => Promise<void>;
-	startImport: (chunks: TranscriptChunk[], sourceFile: string) => Promise<void>;
+	startImport: (
+		chunks: TranscriptChunk[],
+		sourceFile: string,
+		extractionMode: ExtractionMode,
+	) => Promise<void>;
 	pauseDemo: () => void;
 	resumeDemo: () => void;
 	resetDemo: () => void;
@@ -167,6 +172,9 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 	// read by saveCurrentMeeting so the snapshot carries the source field.
 	const sourceRef = useRef<MeetingSource | undefined>(undefined);
 	const sourceFileRef = useRef<string | undefined>(undefined);
+	// AIZ-32 — extraction mode for the active session. `undefined` outside of
+	// import (live/demo run with the default attribution prompt today).
+	const extractionModeRef = useRef<ExtractionMode | undefined>(undefined);
 	// Holds the latest saveCurrentMeeting impl so the audio-phase listener
 	// (registered once) can always call the current version.
 	const saveCurrentMeetingRef = useRef<
@@ -269,6 +277,7 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		namingInFlightRef.current = false;
 		sourceRef.current = undefined;
 		sourceFileRef.current = undefined;
+		extractionModeRef.current = undefined;
 		setName(null);
 		setNameLockedByUser(false);
 		emitGraph(startGraph);
@@ -298,6 +307,7 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 				nameLockedByUser: nameLockedRef.current,
 				source: sourceRef.current,
 				sourceFile: sourceFileRef.current,
+				extractionMode: extractionModeRef.current,
 			});
 			const id = await saveSnapshot(snap);
 			console.log(`[meeting] saved snapshot ${id}`);
@@ -500,6 +510,7 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 				const result = await mutateGraph(current, formatChunkBatch(batch), {
 					previousThoughts: thoughtsRef.current,
 					recentTranscript: recentTranscriptText(),
+					extractionMode: extractionModeRef.current,
 				});
 				if (signal.cancelled) return;
 
@@ -571,10 +582,16 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		}
 	};
 
-	const startImport = async (chunks: TranscriptChunk[], sourceFile: string) => {
+	const startImport = async (
+		chunks: TranscriptChunk[],
+		sourceFile: string,
+		extractionMode: ExtractionMode,
+	) => {
 		const dlog = (msg: string) =>
 			invoke("log_from_frontend", { msg: `[import] ${msg}` }).catch(() => {});
-		dlog(`startImport: chunks=${chunks.length} sourceFile=${sourceFile}`);
+		dlog(
+			`startImport: chunks=${chunks.length} sourceFile=${sourceFile} mode=${extractionMode}`,
+		);
 		if (runningRef.current) {
 			dlog("startImport bailed: runningRef already true");
 			return;
@@ -592,6 +609,7 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		sessionSavedRef.current = false;
 		sourceRef.current = "transcript-import";
 		sourceFileRef.current = sourceFile;
+		extractionModeRef.current = extractionMode;
 		dlog(`startImport ready: meetingId=${meetingIdRef.current}`);
 		// `speedMultiplier: Infinity` zeroes out the pacing sleep — chunks
 		// flow through batching as fast as the model returns. Existing batch
