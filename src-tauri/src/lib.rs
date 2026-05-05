@@ -272,10 +272,10 @@ pub(crate) fn open_meeting_window(app: &AppHandle, meeting_id: Option<&str>) {
     open_meeting_window_with_query(app, meeting_id, None);
 }
 
-/// Open the meeting graph + outline windows. If `query` is set, it's
-/// appended to the meeting URL (e.g. `?autostart=live`) so the React
-/// route can react to it via `window.location.search`. Used by the IPC
-/// `POST /v1/meetings` handler to launch live/demo capture.
+/// Open the unified meeting window (graph + outline split-pane). If
+/// `query` is set, it's appended to the meeting URL (e.g. `?autostart=live`)
+/// so the React route can react to it via `window.location.search`.
+/// Used by the IPC `POST /v1/meetings` handler to launch live/demo capture.
 pub(crate) fn open_meeting_window_with_query(
     app: &AppHandle,
     meeting_id: Option<&str>,
@@ -283,10 +283,7 @@ pub(crate) fn open_meeting_window_with_query(
 ) {
     let id = meeting_id.unwrap_or("test");
     let graph_label = format!("meeting-{id}");
-    let outline_label = format!("meeting-outline-{id}");
 
-    // Compute monitor-relative geometry so the graph + outline windows
-    // are paired on-screen with safe edge margins and reasonable caps.
     let (sw, sh, sx, sy) = match app.primary_monitor() {
         Ok(Some(m)) => {
             let size = m.size();
@@ -302,18 +299,14 @@ pub(crate) fn open_meeting_window_with_query(
         _ => (1440.0, 900.0, 0.0, 0.0),
     };
 
+    // Sized to roughly the previous (graph + outline) footprint so the
+    // unified window doesn't feel smaller than the old paired layout.
     let margin = (sw * 0.05).max(40.0);
     let avail_w = (sw - 2.0 * margin).max(960.0);
-    let total_h = (sh * 0.85).min(1000.0);
-    let gap = 16.0;
-
-    let outline_w = (avail_w * 0.28).clamp(360.0, 480.0);
-    let graph_w = (avail_w - outline_w - gap).min(1400.0);
-    let pair_w = graph_w + gap + outline_w;
-
-    let x_graph = sx + (sw - pair_w) / 2.0;
-    let x_outline = x_graph + graph_w + gap;
-    let y = sy + (sh - total_h) / 2.0;
+    let window_w = avail_w.min(1860.0);
+    let window_h = (sh * 0.85).min(1000.0);
+    let x = sx + (sw - window_w) / 2.0;
+    let y = sy + (sh - window_h) / 2.0;
 
     if let Some(window) = app.get_webview_window(&graph_label) {
         window.set_focus().ok();
@@ -323,20 +316,9 @@ pub(crate) fn open_meeting_window_with_query(
             _ => format!("meeting/{id}"),
         };
         WebviewWindowBuilder::new(app, &graph_label, WebviewUrl::App(url.into()))
-            .title("Aizuchi — meeting prototype")
-            .inner_size(graph_w, total_h)
-            .position(x_graph, y)
-            .build()
-            .ok();
-    }
-
-    if let Some(window) = app.get_webview_window(&outline_label) {
-        window.set_focus().ok();
-    } else {
-        WebviewWindowBuilder::new(app, &outline_label, WebviewUrl::default())
-            .title("Aizuchi — outline")
-            .inner_size(outline_w, total_h)
-            .position(x_outline, y)
+            .title("Aizuchi — meeting")
+            .inner_size(window_w, window_h)
+            .position(x, y)
             .build()
             .ok();
     }

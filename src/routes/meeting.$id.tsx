@@ -7,11 +7,17 @@ import {
 	type Node as RFNode,
 } from "@xyflow/react";
 import { useEffect, useMemo, useRef } from "react";
+import {
+	Panel as ResizePanel,
+	PanelGroup,
+	PanelResizeHandle,
+} from "react-resizable-panels";
 import { Canvas } from "@/components/ai-elements/canvas";
 import { Edge as AIEdge } from "@/components/ai-elements/edge";
 import { Panel } from "@/components/ai-elements/panel";
 import { AizuchiNode } from "@/components/aizuchi/aizuchi-node";
 import { LiveTranscript } from "@/components/aizuchi/LiveTranscript";
+import { MeetingOutline } from "@/components/aizuchi/MeetingOutline";
 import { MeetingStatusPanel } from "@/components/aizuchi/MeetingStatusPanel";
 import { useCommandPaletteHotkey } from "@/hooks/useCommandPaletteHotkey";
 import { useMeetingSession } from "@/hooks/useMeetingSession";
@@ -167,49 +173,62 @@ function MeetingPrototype() {
 
 	return (
 		<div className="h-screen w-screen bg-background">
-			<ReactFlowProvider>
-				<Canvas
-					nodes={nodes}
-					edges={edges}
-					nodeTypes={nodeTypes}
-					edgeTypes={edgeTypes}
+			<PanelGroup direction="horizontal">
+				<ResizePanel defaultSize={72} minSize={40}>
+					<ReactFlowProvider>
+						<Canvas
+							nodes={nodes}
+							edges={edges}
+							nodeTypes={nodeTypes}
+							edgeTypes={edgeTypes}
+						>
+							<Panel position="top-left">
+								<MeetingStatusPanel
+									status={session.status}
+									mode={session.mode}
+									batchIdx={session.batchIdx}
+									chunkCount={session.transcript.length}
+									graph={session.graph}
+									error={session.error}
+									stats={session.stats}
+									generatingNotes={session.generatingNotes}
+									archivedAt={session.archivedAt}
+									name={session.name}
+									nameLockedByUser={session.nameLockedByUser}
+									onSetName={session.setMeetingName}
+									onStartDemo={session.startDemo}
+									onStartLive={session.startLive}
+									onResumeLive={session.resumeLive}
+									onStopLive={session.stopLive}
+									onPause={session.pauseDemo}
+									onResume={session.resumeDemo}
+									onReset={session.resetDemo}
+									onGenerateNotes={session.generateNotes}
+								/>
+							</Panel>
+							{session.transcript.length > 0 && (
+								<Panel position="bottom-center">
+									<LiveTranscript
+										chunks={session.transcript}
+										passes={session.passes}
+										open={session.transcriptOpen}
+										onToggle={() => session.setTranscriptOpen((v) => !v)}
+									/>
+								</Panel>
+							)}
+						</Canvas>
+					</ReactFlowProvider>
+				</ResizePanel>
+				<PanelResizeHandle className="w-px bg-border transition-colors hover:w-0.5 hover:bg-foreground/20 data-[resize-handle-active]:bg-foreground/30" />
+				<ResizePanel
+					defaultSize={28}
+					minSize={18}
+					collapsible
+					collapsedSize={0}
 				>
-					<Panel position="top-left">
-						<MeetingStatusPanel
-							status={session.status}
-							mode={session.mode}
-							batchIdx={session.batchIdx}
-							chunkCount={session.transcript.length}
-							graph={session.graph}
-							error={session.error}
-							stats={session.stats}
-							generatingNotes={session.generatingNotes}
-							archivedAt={session.archivedAt}
-							name={session.name}
-							nameLockedByUser={session.nameLockedByUser}
-							onSetName={session.setMeetingName}
-							onStartDemo={session.startDemo}
-							onStartLive={session.startLive}
-							onResumeLive={session.resumeLive}
-							onStopLive={session.stopLive}
-							onPause={session.pauseDemo}
-							onResume={session.resumeDemo}
-							onReset={session.resetDemo}
-							onGenerateNotes={session.generateNotes}
-						/>
-					</Panel>
-					{session.transcript.length > 0 && (
-						<Panel position="bottom-center">
-							<LiveTranscript
-								chunks={session.transcript}
-								passes={session.passes}
-								open={session.transcriptOpen}
-								onToggle={() => session.setTranscriptOpen((v) => !v)}
-							/>
-						</Panel>
-					)}
-				</Canvas>
-			</ReactFlowProvider>
+					<MeetingOutline graph={session.graph} />
+				</ResizePanel>
+			</PanelGroup>
 		</div>
 	);
 }
