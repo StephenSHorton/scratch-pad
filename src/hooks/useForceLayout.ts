@@ -47,7 +47,7 @@ const COLLISION_RADIUS = Math.hypot(CARD_W, CARD_H) / 2 + 24;
  * grows outward from the conversation's actual gravity.
  */
 const RING_SPACING = 380;
-const DISCONNECTED_RADIUS_FALLBACK = 2200;
+const DISCONNECTED_RADIUS_FALLBACK = 3000;
 
 const RELATION_LINK: Record<
 	EdgeRelation,
@@ -197,15 +197,31 @@ export function useForceLayout(graph: Graph): ForceLayoutResult {
 		if (maxDegree < 3) hubId = null;
 
 		// Build/refresh the SimNode set, preserving positions for nodes
-		// that already existed.
+		// that already existed. The hub gets `fx`/`fy` set to (0, 0) so
+		// d3-force pins it exactly at the origin — without this, the
+		// 9-ish neighbors all repel the hub via charge, nudging it
+		// off-center and stretching the rings asymmetrically.
 		const next = new Map<string, SimNode>();
 		for (const n of graph.nodes) {
+			const isHub = n.id === hubId;
 			const existing = nodesRef.current.get(n.id);
 			if (existing) {
+				if (isHub) {
+					existing.fx = 0;
+					existing.fy = 0;
+				} else {
+					existing.fx = null;
+					existing.fy = null;
+				}
 				next.set(n.id, existing);
 			} else {
 				const seed = seedPosition(n.id, graph, nodesRef.current);
-				next.set(n.id, { id: n.id, x: seed.x, y: seed.y });
+				const node: SimNode = { id: n.id, x: seed.x, y: seed.y };
+				if (isHub) {
+					node.fx = 0;
+					node.fy = 0;
+				}
+				next.set(n.id, node);
 			}
 		}
 		nodesRef.current = next;
@@ -246,7 +262,7 @@ export function useForceLayout(graph: Graph): ForceLayoutResult {
 			},
 			0,
 			0,
-		).strength((d) => (bfsDist.has(d.id) ? 0.5 : 0.05));
+		).strength((d) => (bfsDist.has(d.id) ? 0.6 : 0.05));
 
 		if (!simRef.current) {
 			simRef.current = forceSimulation<SimNode, SimLink>(simNodes)
