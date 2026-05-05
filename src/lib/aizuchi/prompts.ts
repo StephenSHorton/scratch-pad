@@ -73,6 +73,19 @@ Optional fields on every node — use them when they add signal:
 - **quote** — a verbatim transcript snippet (≤200 chars) that grounded the node. Use the speaker's actual words, not a paraphrase. Strongest on \`decision\`, \`risk\`, \`assumption\`, \`hypothesis\`, \`metric\`, \`sentiment\`.
 - **tags** — free-form lowercase labels you invent (e.g. \`security\`, \`q3\`, \`customer-driven\`). Useful for cross-cutting themes that aren't worth their own node.
 
+## Type-specific structured fields
+
+These optional fields apply to specific types. Set them whenever the speaker gives the data — the UI renders them prominently:
+
+- **risk** — \`likelihood\` and \`impact\` (each \`low\`/\`medium\`/\`high\`). Use the speaker's framing ("might", "could" → low–medium; "definitely will if" → high).
+- **hypothesis** — \`prediction\`: the predicted outcome (the "then" half of "if X then Y"). The label is the proposal; \`prediction\` is what they expect to follow.
+- **metric** — \`value\` (headline number as said: "180ms", "30%", "$4.2M"), optional \`target\` (threshold being compared against), optional \`unit\` (when separable). Pull the number into \`value\` rather than burying it in the label.
+- **event** — \`occurredAt\`: when this happens. ISO date when known ("2026-04-12"), natural language otherwise ("last Tuesday", "next sprint").
+- **constraint** — \`limit\`: the actual hard limit the constraint enforces ("Friday EOD", "$100k", "no PII in logs"). Make this the headline.
+- **action_item** — \`dueDate\` when a deadline is stated.
+- **sentiment** — \`tone\`: a single word for the emotion ("frustrated", "excited", "uncertain", "aligned"). \`label\` is the topic the emotion is about; \`tone\` is the feeling.
+- **decision** — \`alternative\` when a competing option was explicitly weighed and dropped ("chose Postgres over MySQL" → \`alternative: "MySQL"\`).
+
 ## Stable ids
 
 snake_case slugs from labels. "Travis Chen" → \`travis_chen\`. "Postgres migration" → \`postgres_migration\`. Once an id exists, reuse it across passes. To merge late-discovered duplicates, emit \`merge_nodes\` (preferred) — \`remove_nodes\` is for reclassification, not deduplication.
@@ -247,6 +260,19 @@ Optional fields on every node — use them when they add signal:
 - **confidence** — \`high\` (default, omit), \`medium\` (hedging / inferred), \`low\` (guessing). Prefer demoting confidence over dropping the node.
 - **quote** — verbatim transcript snippet (≤200 chars) that grounded the node. Strongest on \`decision\`, \`risk\`, \`assumption\`, \`hypothesis\`, \`metric\`, \`sentiment\`.
 - **tags** — free-form lowercase labels you invent (e.g. \`security\`, \`q3\`).
+
+## Type-specific structured fields
+
+These optional fields apply to specific types. Set them whenever the transcript supplies the data:
+
+- **risk** — \`likelihood\` and \`impact\` (each \`low\`/\`medium\`/\`high\`).
+- **hypothesis** — \`prediction\`: the predicted outcome (the "then" half).
+- **metric** — \`value\` (headline number: "180ms", "30%", "$4.2M"), optional \`target\`, optional \`unit\`. Pull the number into \`value\` rather than burying it in the label.
+- **event** — \`occurredAt\`: ISO when known, natural language otherwise.
+- **constraint** — \`limit\`: the hard limit ("Friday EOD", "$100k", "no PII in logs").
+- **action_item** — \`dueDate\` when a deadline is stated.
+- **sentiment** — \`tone\`: a single word for the emotion. \`label\` is the topic, \`tone\` is the feeling.
+- **decision** — \`alternative\` when a competing option was explicitly weighed.
 
 ## Stable ids
 

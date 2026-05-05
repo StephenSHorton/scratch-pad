@@ -49,6 +49,9 @@ export type NodeStatus = z.infer<typeof NodeStatus>;
 export const NodeConfidence = z.enum(["high", "medium", "low"]);
 export type NodeConfidence = z.infer<typeof NodeConfidence>;
 
+export const Severity = z.enum(["low", "medium", "high"]);
+export type Severity = z.infer<typeof Severity>;
+
 export const Node = z.object({
 	id: z
 		.string()
@@ -84,6 +87,69 @@ export const Node = z.object({
 		.describe(
 			"Free-form labels — lowercase, single words or hyphenated. Invent as needed (e.g. 'security', 'q3', 'customer-driven').",
 		),
+	// AIZ-12 — type-specific structured fields. All optional and additive;
+	// each one only applies to certain node types but lives flat on Node so
+	// the model has a single shape to fill.
+	likelihood: Severity.optional().describe(
+		"For `risk` nodes — how likely the bad outcome is. Set alongside `impact`.",
+	),
+	impact: Severity.optional().describe(
+		"For `risk` nodes — how bad the outcome would be if it happens.",
+	),
+	prediction: z
+		.string()
+		.optional()
+		.describe(
+			"For `hypothesis` nodes — the predicted outcome (the 'then' half of 'if X then Y'). Keep terse.",
+		),
+	value: z
+		.string()
+		.optional()
+		.describe(
+			"For `metric` nodes — the headline number/value as the speaker said it (e.g. '180ms', '30%', '$4.2M'). String, not parsed.",
+		),
+	target: z
+		.string()
+		.optional()
+		.describe(
+			"For `metric` nodes — the target/threshold being compared against (e.g. '200ms', '5%').",
+		),
+	unit: z
+		.string()
+		.optional()
+		.describe(
+			"For `metric` nodes — unit when separable (e.g. 'ms', '%', 'requests/sec'). Often baked into `value` instead; only set when calling it out.",
+		),
+	occurredAt: z
+		.string()
+		.optional()
+		.describe(
+			"For `event` nodes — when this happened/will happen. Use ISO date when known (2026-04-12) or natural language otherwise ('last Tuesday', 'next sprint').",
+		),
+	limit: z
+		.string()
+		.optional()
+		.describe(
+			"For `constraint` nodes — the actual hard limit ('Friday EOD', '$100k', 'no PII in logs'). The headline value the constraint enforces.",
+		),
+	dueDate: z
+		.string()
+		.optional()
+		.describe(
+			"For `action_item` nodes — when this is due. ISO date when stated, otherwise natural language ('end of week').",
+		),
+	tone: z
+		.string()
+		.optional()
+		.describe(
+			"For `sentiment` nodes — the emotion as a single word ('frustrated', 'excited', 'uncertain', 'aligned'). The label is the topic; tone is the emotion about it.",
+		),
+	alternative: z
+		.string()
+		.optional()
+		.describe(
+			"For `decision` nodes — the rejected option, when one was explicitly weighed and dropped ('chose Postgres over MySQL' → alternative: 'MySQL').",
+		),
 });
 export type Node = z.infer<typeof Node>;
 
@@ -113,6 +179,17 @@ export const NodeUpdate = z.object({
 	confidence: NodeConfidence.optional(),
 	quote: z.string().max(200).optional(),
 	tags: z.array(z.string()).optional(),
+	likelihood: Severity.optional(),
+	impact: Severity.optional(),
+	prediction: z.string().optional(),
+	value: z.string().optional(),
+	target: z.string().optional(),
+	unit: z.string().optional(),
+	occurredAt: z.string().optional(),
+	limit: z.string().optional(),
+	dueDate: z.string().optional(),
+	tone: z.string().optional(),
+	alternative: z.string().optional(),
 });
 export type NodeUpdate = z.infer<typeof NodeUpdate>;
 
@@ -265,6 +342,17 @@ export function applyDiff(graph: Graph, diff: GraphDiff): Graph {
 			...(u.confidence !== undefined && { confidence: u.confidence }),
 			...(u.quote !== undefined && { quote: u.quote }),
 			...(u.tags !== undefined && { tags: u.tags }),
+			...(u.likelihood !== undefined && { likelihood: u.likelihood }),
+			...(u.impact !== undefined && { impact: u.impact }),
+			...(u.prediction !== undefined && { prediction: u.prediction }),
+			...(u.value !== undefined && { value: u.value }),
+			...(u.target !== undefined && { target: u.target }),
+			...(u.unit !== undefined && { unit: u.unit }),
+			...(u.occurredAt !== undefined && { occurredAt: u.occurredAt }),
+			...(u.limit !== undefined && { limit: u.limit }),
+			...(u.dueDate !== undefined && { dueDate: u.dueDate }),
+			...(u.tone !== undefined && { tone: u.tone }),
+			...(u.alternative !== undefined && { alternative: u.alternative }),
 		});
 	}
 

@@ -5,8 +5,9 @@ import {
 	ReactFlowProvider,
 	type Edge as RFEdge,
 	type Node as RFNode,
+	useReactFlow,
 } from "@xyflow/react";
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
 	type PanelImperativeHandle,
 	Group as ResizeGroup,
@@ -95,10 +96,36 @@ function pickHandles(
 // Drag the outline below this percentage and it snaps closed on release.
 const OUTLINE_COLLAPSE_THRESHOLD = 20;
 
+interface Neighborhood {
+	nodeIds: ReadonlySet<string>;
+	edgeIds: ReadonlySet<string>;
+}
+
+function computeNeighborhood(
+	graph: Graph,
+	selectedId: string | null,
+): Neighborhood | null {
+	if (!selectedId) return null;
+	const nodeIds = new Set<string>([selectedId]);
+	const edgeIds = new Set<string>();
+	for (const e of graph.edges) {
+		if (e.from === selectedId) {
+			nodeIds.add(e.to);
+			edgeIds.add(e.id);
+		} else if (e.to === selectedId) {
+			nodeIds.add(e.from);
+			edgeIds.add(e.id);
+		}
+	}
+	return { nodeIds, edgeIds };
+}
+
 function layoutGraph(
 	graph: Graph,
 	highlightIds: ReadonlySet<string>,
+	selectedId: string | null,
 ): { nodes: RFNode[]; edges: RFEdge[] } {
+	const neighborhood = computeNeighborhood(graph, selectedId);
 	const counters: Partial<Record<NodeType, number>> = {};
 	const positions = new Map<string, { x: number; y: number }>();
 	const nodes: RFNode[] = graph.nodes.map((n) => {
@@ -106,11 +133,20 @@ function layoutGraph(
 		counters[n.type] = idx + 1;
 		const position = { x: COLUMN_X[n.type], y: idx * ROW_HEIGHT };
 		positions.set(n.id, position);
+		const inNeighborhood = neighborhood?.nodeIds.has(n.id) ?? false;
+		const isFocused = neighborhood ? n.id === selectedId : false;
+		const dimmed = !!neighborhood && !inNeighborhood;
 		return {
 			id: n.id,
 			type: "aizuchi",
 			position,
-			data: { node: n, highlighted: highlightIds.has(n.id) },
+			data: {
+				node: n,
+				highlighted: highlightIds.has(n.id),
+				inNeighborhood,
+				isFocused,
+				dimmed,
+			},
 		};
 	});
 
@@ -121,6 +157,8 @@ function layoutGraph(
 			fromPos && toPos
 				? pickHandles(fromPos, toPos)
 				: { sourceHandle: "s-right", targetHandle: "t-left" };
+		const inNeighborhood = neighborhood?.edgeIds.has(e.id) ?? false;
+		const dimmed = !!neighborhood && !inNeighborhood;
 		return {
 			id: e.id,
 			source: e.from,
@@ -130,6 +168,11 @@ function layoutGraph(
 			type: "animated",
 			label: e.relation,
 			data: e,
+			style: dimmed
+				? { stroke: "var(--muted-foreground)", strokeOpacity: 0.15 }
+				: inNeighborhood
+					? { stroke: "var(--primary)", strokeWidth: 2 }
+					: undefined,
 		};
 	});
 
@@ -141,6 +184,58 @@ const edgeTypes = {
 	animated: AIEdge.Animated,
 	temporary: AIEdge.Temporary,
 } as const;
+
+/**
+ * AIZ-12 — when the AI touches new nodes (the highlightIds set turns
+ * over), smoothly pan/zoom the viewport to frame those nodes so the
+ * user sees the AI working live. We debounce slightly so a flurry of
+ * adds inside a single pass produces one camera move, not several.
+ */
+function CameraFollower({
+	highlightIds,
+	graphNodeCount,
+}: {
+	highlightIds: ReadonlySet<string>;
+	graphNodeCount: number;
+}) {
+	const { fitView } = useReactFlow();
+	const previousIdsRef = useRef<ReadonlySet<string>>(new Set());
+
+	useEffect(() => {
+		const previous = previousIdsRef.current;
+		const newlyTouched: string[] = [];
+		for (const id of highlightIds) {
+			if (!previous.has(id)) newlyTouched.push(id);
+		}
+		previousIdsRef.current = highlightIds;
+		if (newlyTouched.length === 0) return;
+
+		// Debounce so several add_nodes in one pass don't trigger several
+		// successive camera moves — ReactFlow's fitView animates over time.
+		const handle = window.setTimeout(() => {
+			fitView({
+				nodes: newlyTouched.map((id) => ({ id })),
+				duration: 700,
+				padding: 0.4,
+				maxZoom: 1.2,
+			});
+		}, 80);
+		return () => window.clearTimeout(handle);
+	}, [highlightIds, fitView]);
+
+	// First-paint: frame the whole graph once we have nodes. Without
+	// this the canvas opens at the default zoom and the user sees a
+	// distant cluster, not the work in progress.
+	const firstFitDoneRef = useRef(false);
+	useEffect(() => {
+		if (firstFitDoneRef.current) return;
+		if (graphNodeCount === 0) return;
+		firstFitDoneRef.current = true;
+		fitView({ duration: 400, padding: 0.3 });
+	}, [graphNodeCount, fitView]);
+
+	return null;
+}
 
 function MeetingPrototype() {
 	useCommandPaletteHotkey();
@@ -337,10 +432,25 @@ function MeetingPrototype() {
 		};
 	}, [id]);
 
+	const [selectedId, setSelectedId] = useState<string | null>(null);
+
+	// Drop the focused selection if its node disappears (merge / remove).
+	useEffect(() => {
+		if (!selectedId) return;
+		if (!session.graph.nodes.some((n) => n.id === selectedId)) {
+			setSelectedId(null);
+		}
+	}, [session.graph, selectedId]);
+
 	const { nodes, edges } = useMemo(
-		() => layoutGraph(session.graph, session.highlightIds),
-		[session.graph, session.highlightIds],
+		() => layoutGraph(session.graph, session.highlightIds, selectedId),
+		[session.graph, session.highlightIds, selectedId],
 	);
+
+	const onNodeClick = useCallback((_e: React.MouseEvent, node: RFNode) => {
+		setSelectedId((current) => (current === node.id ? null : node.id));
+	}, []);
+	const onPaneClick = useCallback(() => setSelectedId(null), []);
 
 	return (
 		<div
@@ -361,7 +471,13 @@ function MeetingPrototype() {
 								edges={edges}
 								nodeTypes={nodeTypes}
 								edgeTypes={edgeTypes}
+								onNodeClick={onNodeClick}
+								onPaneClick={onPaneClick}
 							>
+								<CameraFollower
+									highlightIds={session.highlightIds}
+									graphNodeCount={session.graph.nodes.length}
+								/>
 								<Panel position="top-left">
 									<MeetingStatusPanel
 										status={session.status}
