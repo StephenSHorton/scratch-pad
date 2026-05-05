@@ -505,12 +505,6 @@
 	pointer-events: auto !important;
 }
 
-.aiz-meeting-group.aiz-resizing .react-flow__nodes,
-.aiz-meeting-group.aiz-resizing .react-flow__edges,
-.aiz-meeting-group.aiz-resizing .react-flow__edgelabel-renderer {
-	visibility: hidden !important;
-}
-
 #aiz-outline-panel {
 	transition: opacity 120ms ease-out;
 }

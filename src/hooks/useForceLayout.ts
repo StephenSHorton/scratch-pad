@@ -85,9 +85,9 @@ export interface ForceLayoutResult {
 	/**
 	 * Timestamp (Date.now()) of the most recent simulation settle. Updated
 	 * each time the sim's `end` event fires (alpha drops below alphaMin).
-	 * Consumers like CameraFollower wait on this so they only fire fitView
-	 * when the nodes have actually stopped moving — otherwise the camera
-	 * frames mid-flight positions the simulation immediately leaves behind.
+	 * MeetingCanvas waits on this so it only fires fitView when the nodes
+	 * have actually stopped moving — otherwise the camera frames mid-flight
+	 * positions the simulation immediately leaves behind.
 	 * 0 before any settle has occurred.
 	 */
 	settledAt: number;
@@ -162,7 +162,25 @@ function seedPosition(
 	return { x: sx / n + jitter(), y: sy / n + jitter() };
 }
 
-export function useForceLayout(graph: Graph): ForceLayoutResult {
+/**
+ * AIZ-48 — focus-mode helper. Returns the set of node IDs that make up the
+ * focused node's 1-hop neighborhood (the focused node itself + every direct
+ * neighbor). Used to drive the pin/unpin pattern that pulls neighbors to
+ * the focused node and freezes everything outside the neighborhood in place.
+ */
+function neighborhoodIds(graph: Graph, focused: string): Set<string> {
+	const ids = new Set<string>([focused]);
+	for (const e of graph.edges) {
+		if (e.from === focused) ids.add(e.to);
+		else if (e.to === focused) ids.add(e.from);
+	}
+	return ids;
+}
+
+export function useForceLayout(
+	graph: Graph,
+	selectedId: string | null = null,
+): ForceLayoutResult {
 	const [positions, setPositions] = useState<PositionMap>(new Map());
 	const [settledAt, setSettledAt] = useState(0);
 	const simRef = useRef<Simulation<SimNode, SimLink> | null>(null);
@@ -175,10 +193,23 @@ export function useForceLayout(graph: Graph): ForceLayoutResult {
 	// don't leave the tick handler iterating the empty array captured the
 	// first time the simulation was created.
 	const simNodesRef = useRef<SimNode[]>([]);
+	// Tracks the previous selectedId across runs so we can detect entering
+	// vs. leaving focus mode and use a higher alpha bump on the transition
+	// — the snappier-than-default settle is what gives the "flick" feel.
+	const previousSelectedRef = useRef<string | null>(null);
 
 	useEffect(() => {
-		// Find the most-connected node — it'll be pulled to the origin
-		// so the rest of the graph orbits around it (Obsidian-style).
+		// In focus mode the focused node is the de-facto hub (pinned at 0,0),
+		// the radial-BFS layout is suspended, and every node outside the 1-hop
+		// neighborhood is pinned at its current position so the rest of the
+		// graph holds still. On unfocus, the original hub re-claims (0,0) and
+		// the regular BFS-radial structure rebuilds with an alpha bump for a
+		// spring-back into the full layout.
+		const focused = selectedId ?? null;
+		const neighborhood = focused ? neighborhoodIds(graph, focused) : null;
+
+		// Find the most-connected node — only meaningful in normal (unfocused)
+		// mode. In focus mode, the focused node takes the origin instead.
 		const degrees = new Map<string, number>();
 		for (const e of graph.edges) {
 			degrees.set(e.from, (degrees.get(e.from) ?? 0) + 1);
@@ -196,33 +227,46 @@ export function useForceLayout(graph: Graph): ForceLayoutResult {
 		// single node should hijack the centering force.
 		if (maxDegree < 3) hubId = null;
 
-		// Build/refresh the SimNode set, preserving positions for nodes
-		// that already existed. The hub gets `fx`/`fy` set to (0, 0) so
-		// d3-force pins it exactly at the origin — without this, the
-		// 9-ish neighbors all repel the hub via charge, nudging it
-		// off-center and stretching the rings asymmetrically.
+		// Build/refresh the SimNode set, preserving positions for nodes that
+		// already existed. Pinning depends on focus state:
+		//   - focus mode: focused node fx/fy = (0,0); neighbors free; everyone
+		//     else pinned at their current x/y so they don't drift away.
+		//   - normal mode: hub fx/fy = (0,0); everyone else free.
 		const next = new Map<string, SimNode>();
 		for (const n of graph.nodes) {
-			const isHub = n.id === hubId;
 			const existing = nodesRef.current.get(n.id);
+			let node: SimNode;
 			if (existing) {
-				if (isHub) {
-					existing.fx = 0;
-					existing.fy = 0;
-				} else {
-					existing.fx = null;
-					existing.fy = null;
-				}
-				next.set(n.id, existing);
+				node = existing;
 			} else {
 				const seed = seedPosition(n.id, graph, nodesRef.current);
-				const node: SimNode = { id: n.id, x: seed.x, y: seed.y };
-				if (isHub) {
+				node = { id: n.id, x: seed.x, y: seed.y };
+			}
+
+			if (focused) {
+				if (n.id === focused) {
 					node.fx = 0;
 					node.fy = 0;
+				} else if (neighborhood?.has(n.id)) {
+					node.fx = null;
+					node.fy = null;
+				} else {
+					// Pin at current position so the rest of the graph holds.
+					// Falls back to (0,0) only for nodes that just appeared
+					// in the graph and haven't been ticked yet.
+					node.fx = node.x ?? 0;
+					node.fy = node.y ?? 0;
 				}
-				next.set(n.id, node);
+			} else {
+				if (n.id === hubId) {
+					node.fx = 0;
+					node.fy = 0;
+				} else {
+					node.fx = null;
+					node.fy = null;
+				}
 			}
+			next.set(n.id, node);
 		}
 		nodesRef.current = next;
 		const simNodes = [...next.values()];
@@ -246,23 +290,32 @@ export function useForceLayout(graph: Graph): ForceLayoutResult {
 			.strength((l) => (l as SimLink & { strength?: number }).strength ?? 0.4);
 
 		// BFS-radial — every node connected to the hub gets pulled to a
-		// ring at distance (bfs depth × RING_SPACING). The hub itself
-		// sits at radius 0. Strength 0.5 means rings dominate over link
-		// forces (max 0.7), so the structure is *tree-like radial*
-		// instead of a free-floating cloud. Disconnected sub-graphs get
-		// pulled to the perimeter at a weaker strength so their internal
-		// links cluster them locally without yanking them off-screen.
+		// ring at distance (bfs depth × RING_SPACING). Disabled in focus mode
+		// because the rings are anchored on the original hub, which would
+		// fight the focused node for the centre. Without the radial, link +
+		// charge + collide give a clean local force-directed layout for the
+		// neighborhood around the pinned focused node.
 		const bfsDist = bfsDistances(graph, hubId);
-		const radial = forceRadial<SimNode>(
-			(d) => {
-				const r = bfsDist.get(d.id);
-				return r !== undefined
-					? r * RING_SPACING
-					: DISCONNECTED_RADIUS_FALLBACK;
-			},
-			0,
-			0,
-		).strength((d) => (bfsDist.has(d.id) ? 0.6 : 0.05));
+		const radial = focused
+			? null
+			: forceRadial<SimNode>(
+					(d) => {
+						const r = bfsDist.get(d.id);
+						return r !== undefined
+							? r * RING_SPACING
+							: DISCONNECTED_RADIUS_FALLBACK;
+					},
+					0,
+					0,
+				).strength((d) => (bfsDist.has(d.id) ? 0.6 : 0.05));
+
+		// Alpha bump magnitude. Focus enter/leave gets a noticeably higher
+		// kick so the neighborhood actually flicks; ordinary graph mutations
+		// stay at the gentler default so AI-added nodes don't punch the
+		// existing layout around.
+		const focusChanged = focused !== previousSelectedRef.current;
+		previousSelectedRef.current = focused;
+		const alphaBump = focusChanged ? 0.85 : 0.6;
 
 		if (!simRef.current) {
 			simRef.current = forceSimulation<SimNode, SimLink>(simNodes)
@@ -292,14 +345,12 @@ export function useForceLayout(graph: Graph): ForceLayoutResult {
 		} else {
 			simRef.current.nodes(simNodes);
 			simRef.current.force("link", link);
-			// Re-attach the per-node radial force so it reads from the
-			// fresh BFS distances (the hub may have shifted as the AI
-			// added new edges).
+			// Reattach (or clear) the radial force. Passing `null` removes it,
+			// which is what focus mode wants.
 			simRef.current.force("radial", radial);
-			// Bump alpha so newly-added nodes settle in.
-			simRef.current.alpha(0.6).restart();
+			simRef.current.alpha(alphaBump).restart();
 		}
-	}, [graph]);
+	}, [graph, selectedId]);
 
 	useEffect(() => {
 		return () => {
