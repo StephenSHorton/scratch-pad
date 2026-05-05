@@ -1,5 +1,4 @@
 import {
-	forceCenter,
 	forceCollide,
 	forceLink,
 	forceManyBody,
@@ -225,27 +224,33 @@ export function useForceLayout(graph: Graph): ForceLayoutResult {
 			.distance((l) => (l as SimLink & { distance?: number }).distance ?? 280)
 			.strength((l) => (l as SimLink & { strength?: number }).strength ?? 0.4);
 
-		// Per-type vertical band — soft pull toward TYPE_Y[type]. Strength
-		// 0.06 is a preference, not a constraint; cross-band edges will
-		// still pull connected nodes together.
-		const typeY = forceY<SimNode>((d) => TYPE_Y[d.type]).strength(0.06);
+		// Per-type vertical band — pull toward TYPE_Y[type]. Strength 0.2
+		// is enough to be visible against link forces (max 0.7 for strong
+		// relations like causes/blocks) while still letting connected
+		// nodes drag each other across bands when the relationship
+		// demands.
+		const typeY = forceY<SimNode>((d) => TYPE_Y[d.type]).strength(0.2);
 
-		// Hub anchor — the most-connected node (if any) is pinned strongly
-		// to the origin so the rest of the graph orbits around it. Other
-		// nodes get a near-zero force here so the existing center force is
-		// the only thing centering them.
-		const hubX = forceX<SimNode>(0).strength((d) => (d.isHub ? 0.4 : 0));
-		const hubY = forceY<SimNode>(0).strength((d) => (d.isHub ? 0.4 : 0));
+		// Horizontal centering — replaces the previous forceCenter that
+		// pulled both axes toward (0,0). Keeping Y free lets `typeY` do
+		// its job; X still gets a gentle pull so the graph doesn't drift
+		// off-screen.
+		const centerX = forceX<SimNode>(0).strength(0.12);
+
+		// Hub anchor — the most-connected node (if any) is pinned to the
+		// origin on the X axis so the rest of the graph orbits around it
+		// horizontally. Y is left to the type band — the hub's type
+		// determines its vertical position, like any other node.
+		const hubX = forceX<SimNode>(0).strength((d) => (d.isHub ? 0.5 : 0));
 
 		if (!simRef.current) {
 			simRef.current = forceSimulation<SimNode, SimLink>(simNodes)
 				.force("link", link)
 				.force("charge", forceManyBody<SimNode>().strength(-800))
-				.force("center", forceCenter(0, 0).strength(0.18))
+				.force("centerX", centerX)
 				.force("collide", forceCollide<SimNode>(COLLISION_RADIUS).strength(0.9))
 				.force("typeY", typeY)
 				.force("hubX", hubX)
-				.force("hubY", hubY)
 				.alphaDecay(0.05)
 				.alphaMin(0.002)
 				.on("tick", () => {
@@ -271,9 +276,9 @@ export function useForceLayout(graph: Graph): ForceLayoutResult {
 			// Re-attach the per-node forces so they read from the latest
 			// SimNode set (each call captures the current `simNodes` via
 			// the accessor functions).
+			simRef.current.force("centerX", centerX);
 			simRef.current.force("typeY", typeY);
 			simRef.current.force("hubX", hubX);
-			simRef.current.force("hubY", hubY);
 			// Bump alpha so newly-added nodes settle in.
 			simRef.current.alpha(0.6).restart();
 		}
