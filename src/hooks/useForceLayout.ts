@@ -2,15 +2,14 @@ import {
 	forceCollide,
 	forceLink,
 	forceManyBody,
+	forceRadial,
 	forceSimulation,
-	forceX,
-	forceY,
 	type Simulation,
 	type SimulationLinkDatum,
 	type SimulationNodeDatum,
 } from "d3-force";
 import { useEffect, useRef, useState } from "react";
-import type { EdgeRelation, Graph, NodeType } from "@/lib/aizuchi/schemas";
+import type { EdgeRelation, Graph } from "@/lib/aizuchi/schemas";
 
 /**
  * AIZ-12 — d3-force-driven layout for the meeting canvas. Replaces the
@@ -38,36 +37,17 @@ const CARD_H = 160;
 const COLLISION_RADIUS = Math.hypot(CARD_W, CARD_H) / 2 + 24;
 
 /**
- * AIZ-12 — soft vertical bands per node type. Mirrors the natural flow
- * of a meeting from top to bottom: who's talking → what they're
- * discussing → uncertainty → substance → outputs/problems. The y-force
- * is gentle (strength 0.06) so connected nodes can still pull
- * cross-band when their relationship demands it; the bands are a
- * preference, not a wall.
+ * AIZ-12 — BFS-radial layout. Pick the most-connected node as the hub
+ * (Obsidian's "current note" analog), compute graph distance from it
+ * to every other node, then place each node on a ring whose radius is
+ * proportional to that distance. Hub at center; first-degree
+ * neighbors at ring 1; second-degree at ring 2; and so on. Charge +
+ * link forces handle angular distribution within each ring. This gives
+ * the "trees with branches" pattern the user asked for: structure
+ * grows outward from the conversation's actual gravity.
  */
-const TYPE_Y: Record<NodeType, number> = {
-	// Origin / setup
-	person: -550,
-	topic: -350,
-	context: -250,
-	// Uncertainty / framing
-	assumption: -150,
-	hypothesis: -50,
-	question: 0,
-	// Substance
-	work_item: 100,
-	decision: 100,
-	sentiment: 100,
-	// Concrete things
-	artifact: 220,
-	metric: 220,
-	event: 220,
-	// Outputs / problems
-	blocker: 360,
-	risk: 360,
-	constraint: 360,
-	action_item: 480,
-};
+const RING_SPACING = 380;
+const DISCONNECTED_RADIUS_FALLBACK = 2200;
 
 const RELATION_LINK: Record<
 	EdgeRelation,
@@ -94,10 +74,6 @@ const RELATION_LINK: Record<
 
 interface SimNode extends SimulationNodeDatum {
 	id: string;
-	type: NodeType;
-	/** True for the most-connected node in the graph; pulled hard to (0,0)
-	 * to anchor the layout. */
-	isHub: boolean;
 }
 
 type SimLink = SimulationLinkDatum<SimNode>;
@@ -115,6 +91,44 @@ export interface ForceLayoutResult {
 	 * 0 before any settle has occurred.
 	 */
 	settledAt: number;
+}
+
+/**
+ * AIZ-12 — BFS distance from `hubId` to every other node, treating
+ * edges as undirected. Returns a map; nodes not reachable from the
+ * hub (different component, or `hubId` is null) are absent. Used to
+ * place each node on a concentric ring proportional to its graph
+ * distance from the conversation's anchor.
+ */
+function bfsDistances(graph: Graph, hubId: string | null): Map<string, number> {
+	const dist = new Map<string, number>();
+	if (!hubId) return dist;
+
+	const adj = new Map<string, Set<string>>();
+	for (const e of graph.edges) {
+		if (!adj.has(e.from)) adj.set(e.from, new Set());
+		if (!adj.has(e.to)) adj.set(e.to, new Set());
+		adj.get(e.from)?.add(e.to);
+		adj.get(e.to)?.add(e.from);
+	}
+
+	dist.set(hubId, 0);
+	const queue: string[] = [hubId];
+	while (queue.length > 0) {
+		const cur = queue.shift();
+		if (!cur) break;
+		const d = dist.get(cur);
+		if (d === undefined) continue;
+		const neighbors = adj.get(cur);
+		if (!neighbors) continue;
+		for (const next of neighbors) {
+			if (!dist.has(next)) {
+				dist.set(next, d + 1);
+				queue.push(next);
+			}
+		}
+	}
+	return dist;
 }
 
 /**
@@ -187,20 +201,11 @@ export function useForceLayout(graph: Graph): ForceLayoutResult {
 		const next = new Map<string, SimNode>();
 		for (const n of graph.nodes) {
 			const existing = nodesRef.current.get(n.id);
-			const isHub = n.id === hubId;
 			if (existing) {
-				existing.type = n.type;
-				existing.isHub = isHub;
 				next.set(n.id, existing);
 			} else {
 				const seed = seedPosition(n.id, graph, nodesRef.current);
-				next.set(n.id, {
-					id: n.id,
-					type: n.type,
-					isHub,
-					x: seed.x,
-					y: seed.y,
-				});
+				next.set(n.id, { id: n.id, x: seed.x, y: seed.y });
 			}
 		}
 		nodesRef.current = next;
@@ -224,33 +229,31 @@ export function useForceLayout(graph: Graph): ForceLayoutResult {
 			.distance((l) => (l as SimLink & { distance?: number }).distance ?? 280)
 			.strength((l) => (l as SimLink & { strength?: number }).strength ?? 0.4);
 
-		// Per-type vertical band — pull toward TYPE_Y[type]. Strength 0.2
-		// is enough to be visible against link forces (max 0.7 for strong
-		// relations like causes/blocks) while still letting connected
-		// nodes drag each other across bands when the relationship
-		// demands.
-		const typeY = forceY<SimNode>((d) => TYPE_Y[d.type]).strength(0.2);
-
-		// Horizontal centering — replaces the previous forceCenter that
-		// pulled both axes toward (0,0). Keeping Y free lets `typeY` do
-		// its job; X still gets a gentle pull so the graph doesn't drift
-		// off-screen.
-		const centerX = forceX<SimNode>(0).strength(0.12);
-
-		// Hub anchor — the most-connected node (if any) is pinned to the
-		// origin on the X axis so the rest of the graph orbits around it
-		// horizontally. Y is left to the type band — the hub's type
-		// determines its vertical position, like any other node.
-		const hubX = forceX<SimNode>(0).strength((d) => (d.isHub ? 0.5 : 0));
+		// BFS-radial — every node connected to the hub gets pulled to a
+		// ring at distance (bfs depth × RING_SPACING). The hub itself
+		// sits at radius 0. Strength 0.5 means rings dominate over link
+		// forces (max 0.7), so the structure is *tree-like radial*
+		// instead of a free-floating cloud. Disconnected sub-graphs get
+		// pulled to the perimeter at a weaker strength so their internal
+		// links cluster them locally without yanking them off-screen.
+		const bfsDist = bfsDistances(graph, hubId);
+		const radial = forceRadial<SimNode>(
+			(d) => {
+				const r = bfsDist.get(d.id);
+				return r !== undefined
+					? r * RING_SPACING
+					: DISCONNECTED_RADIUS_FALLBACK;
+			},
+			0,
+			0,
+		).strength((d) => (bfsDist.has(d.id) ? 0.5 : 0.05));
 
 		if (!simRef.current) {
 			simRef.current = forceSimulation<SimNode, SimLink>(simNodes)
 				.force("link", link)
-				.force("charge", forceManyBody<SimNode>().strength(-800))
-				.force("centerX", centerX)
+				.force("charge", forceManyBody<SimNode>().strength(-600))
+				.force("radial", radial)
 				.force("collide", forceCollide<SimNode>(COLLISION_RADIUS).strength(0.9))
-				.force("typeY", typeY)
-				.force("hubX", hubX)
 				.alphaDecay(0.05)
 				.alphaMin(0.002)
 				.on("tick", () => {
@@ -273,12 +276,10 @@ export function useForceLayout(graph: Graph): ForceLayoutResult {
 		} else {
 			simRef.current.nodes(simNodes);
 			simRef.current.force("link", link);
-			// Re-attach the per-node forces so they read from the latest
-			// SimNode set (each call captures the current `simNodes` via
-			// the accessor functions).
-			simRef.current.force("centerX", centerX);
-			simRef.current.force("typeY", typeY);
-			simRef.current.force("hubX", hubX);
+			// Re-attach the per-node radial force so it reads from the
+			// fresh BFS distances (the hub may have shifted as the AI
+			// added new edges).
+			simRef.current.force("radial", radial);
 			// Bump alpha so newly-added nodes settle in.
 			simRef.current.alpha(0.6).restart();
 		}
