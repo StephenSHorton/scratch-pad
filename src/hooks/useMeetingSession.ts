@@ -17,7 +17,7 @@ import {
 	feedTranscriptBatches,
 } from "@/lib/aizuchi/feeder";
 import { standupTranscript } from "@/lib/aizuchi/fixtures/standup-transcript";
-import { mutateGraph } from "@/lib/aizuchi/graph-mutation";
+import { finalizeGraph, mutateGraph } from "@/lib/aizuchi/graph-mutation";
 import { generateMeetingNotes } from "@/lib/aizuchi/meeting-notes";
 import { proposeMeetingName } from "@/lib/aizuchi/name-generator";
 import {
@@ -86,7 +86,11 @@ export type Status =
 	| "paused"
 	| "done"
 	| "error"
-	| "archived";
+	| "archived"
+	// AIZ-49 — single end-of-transcript review pass. Sandwiched between
+	// the last streaming batch and `saveSnapshot`. Distinct from
+	// `thinking` so the UI can show a different pill ("Final review…").
+	| "finalizing";
 
 export type Mode = "idle" | "demo" | "live" | "import";
 
@@ -263,6 +267,7 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		idx: number,
 		consumedChunks: number,
 		thoughts: AIThought[],
+		intent?: PassRecord["intent"],
 	) => {
 		const atChunkIdx = Math.max(consumedChunks - 1, 0);
 		const next: PassRecord = {
@@ -271,9 +276,74 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 			atChunkIdx,
 			thoughts,
 			timestamp: Date.now(),
+			...(intent ? { intent } : {}),
 		};
 		passesRef.current = [...passesRef.current, next];
 		setPasses(passesRef.current);
+	};
+
+	// AIZ-49 — fire-once guard. Both the import post-loop branch and
+	// stopLive can race in unusual cases (user clicks Stop just as the
+	// last batch returns); this ensures the finalize call happens at
+	// most once per session, and that the snapshot save still proceeds
+	// even if finalize errors out.
+	const finalizingRef = useRef(false);
+
+	const runFinalize = async () => {
+		if (finalizingRef.current) return;
+		// Don't bother on empty sessions — saveCurrentMeeting would skip
+		// these anyway, and gemma has nothing to review.
+		if (
+			transcriptRef.current.length === 0 ||
+			graphRef.current.nodes.length === 0
+		) {
+			return;
+		}
+		finalizingRef.current = true;
+		setStatus("finalizing");
+
+		try {
+			const result = await finalizeGraph(
+				graphRef.current,
+				transcriptRef.current,
+				{
+					previousThoughts: thoughtsRef.current,
+					extractionMode: extractionModeRef.current,
+				},
+			);
+			console.log(
+				`[meeting-finalize] no_changes=${result.diff.no_changes} +nodes=${result.diff.add_nodes.length} +edges=${result.diff.add_edges.length} ~nodes=${result.diff.update_nodes.length} merges=${result.diff.merge_nodes.length} -nodes=${result.diff.remove_nodes.length} -edges=${result.diff.remove_edges.length} thoughts=${result.diff.notes.length} (${Math.round(result.latencyMs)}ms ${result.providerLabel})`,
+			);
+
+			const next = applyDiff(graphRef.current, result.diff);
+			updateGraph(next);
+			applyThoughts(result.diff.notes);
+
+			const nextStats: RunStats = {
+				totalBatches: statsRef.current.totalBatches + 1,
+				totalLatencyMs: statsRef.current.totalLatencyMs + result.latencyMs,
+				totalInputTokens:
+					statsRef.current.totalInputTokens + (result.usage?.inputTokens ?? 0),
+				totalOutputTokens:
+					statsRef.current.totalOutputTokens +
+					(result.usage?.outputTokens ?? 0),
+				providerLabel: result.providerLabel,
+			};
+			updateStats(nextStats);
+			setBatchIdx(nextStats.totalBatches);
+
+			recordPass(
+				nextStats.totalBatches,
+				consumedChunksRef.current,
+				result.diff.notes,
+				"finalize",
+			);
+		} catch (err) {
+			// Finalize is best-effort — its failure shouldn't block the
+			// snapshot save. Log and move on; the user's regular extraction
+			// graph is still intact.
+			console.error("[meeting-finalize] failed; falling through to save", err);
+		}
 	};
 
 	const resetSessionState = (nextMode: Mode) => {
@@ -310,6 +380,10 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		sourceRef.current = undefined;
 		sourceFileRef.current = undefined;
 		extractionModeRef.current = undefined;
+		// AIZ-49 — reset the finalize-once guard so a fresh session can
+		// finalize again (resumeLive sets this directly without going
+		// through resetSessionState).
+		finalizingRef.current = false;
 		setName(null);
 		setNameLockedByUser(false);
 		return startGraph;
@@ -587,7 +661,14 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 				await saveCurrentMeeting("demo");
 				setStatus("done");
 			} else if (!signal.cancelled && nextMode === "import") {
-				dlog(`loop done after ${idx} batches; saving snapshot`);
+				dlog(`loop done after ${idx} batches; running finalize pass`);
+				// AIZ-49 — single end-of-transcript review pass before save.
+				// Failures inside runFinalize are caught and logged so a
+				// flaky finalize call never strands the user with an
+				// unsaved meeting.
+				await runFinalize();
+				if (signal.cancelled) return;
+				dlog("finalize done; saving snapshot");
 				const savedId = await saveCurrentMeeting("live");
 				dlog(`saved snapshot id=${savedId ?? "<none>"}`);
 				setMode("idle");
@@ -843,6 +924,10 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		signalRef.current.cancelled = true;
 		runningRef.current = false;
 		await invoke("stop_live_capture").catch(() => {});
+		// AIZ-49 — finalize after the live capture handle is dropped but
+		// before the snapshot save, so the saved snapshot already reflects
+		// the finalize diff (and its `intent: "finalize"` PassRecord).
+		await runFinalize();
 		await saveOnceForLive();
 		setMode("idle");
 		modeRef.current = "idle";

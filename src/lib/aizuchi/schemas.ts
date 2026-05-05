@@ -252,6 +252,12 @@ export interface PassRecord {
 	/** New or updated thoughts emitted by this pass. */
 	thoughts: AIThought[];
 	timestamp: number;
+	/**
+	 * AIZ-49 — set on the single end-of-transcript review pass; omitted
+	 * for the per-batch streaming passes. Lets the saved snapshot's
+	 * history distinguish the finalize pass from regular extraction.
+	 */
+	intent?: "finalize";
 }
 
 export const GraphDiff = z.object({
