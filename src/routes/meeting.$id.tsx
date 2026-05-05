@@ -22,6 +22,7 @@ import { LiveTranscript } from "@/components/aizuchi/LiveTranscript";
 import { MeetingOutline } from "@/components/aizuchi/MeetingOutline";
 import { MeetingStatusPanel } from "@/components/aizuchi/MeetingStatusPanel";
 import { useCommandPaletteHotkey } from "@/hooks/useCommandPaletteHotkey";
+import { type PositionMap, useForceLayout } from "@/hooks/useForceLayout";
 import { useMeetingSession } from "@/hooks/useMeetingSession";
 import type { ExtractionMode, MeetingSource } from "@/lib/aizuchi/persistence";
 import type {
@@ -36,11 +37,6 @@ import type {
 // land on the correct side of the card.
 const NODE_WIDTH = 384;
 const NODE_HEIGHT = 140;
-// AIZ-12 — fallback auto-layout when the AI didn't supply a position. We
-// place unpositioned nodes in a grid below the AI-positioned bounding box.
-const FALLBACK_GRID_COLS = 4;
-const FALLBACK_X_STEP = NODE_WIDTH + 60;
-const FALLBACK_Y_STEP = NODE_HEIGHT + 60;
 
 type HandleSide = "left" | "right" | "top" | "bottom";
 
@@ -102,59 +98,13 @@ function computeNeighborhood(
 	return { nodeIds, edgeIds };
 }
 
-/**
- * AIZ-12 — resolve the on-canvas position of every node. Trust the AI's
- * `node.position` whenever set; for any node the AI hasn't placed yet,
- * drop it into a grid below the bounding box of the AI-placed nodes so
- * it's still discoverable. We sort the unplaced nodes by id so the
- * fallback grid is deterministic across passes (otherwise `add_nodes`
- * order would shuffle the grid every render).
- */
-function resolvePositions(graph: Graph): Map<string, { x: number; y: number }> {
-	const positions = new Map<string, { x: number; y: number }>();
-	let maxX = -Infinity;
-	let maxY = -Infinity;
-	let minX = Infinity;
-	const placedNodes: typeof graph.nodes = [];
-	const unplaced: typeof graph.nodes = [];
-	for (const n of graph.nodes) {
-		if (n.position) {
-			positions.set(n.id, n.position);
-			placedNodes.push(n);
-			if (n.position.x > maxX) maxX = n.position.x;
-			if (n.position.x < minX) minX = n.position.x;
-			if (n.position.y > maxY) maxY = n.position.y;
-		} else {
-			unplaced.push(n);
-		}
-	}
-	if (unplaced.length === 0) return positions;
-
-	// Anchor the fallback grid below the placed bbox; if nothing is
-	// placed yet, anchor at (0, 0).
-	const baseX = placedNodes.length > 0 ? minX : 0;
-	const baseY = placedNodes.length > 0 ? maxY + FALLBACK_Y_STEP : 0;
-
-	// Sort by id for stability across diffs.
-	const sorted = [...unplaced].sort((a, b) => a.id.localeCompare(b.id));
-	sorted.forEach((n, idx) => {
-		const col = idx % FALLBACK_GRID_COLS;
-		const row = Math.floor(idx / FALLBACK_GRID_COLS);
-		positions.set(n.id, {
-			x: baseX + col * FALLBACK_X_STEP,
-			y: baseY + row * FALLBACK_Y_STEP,
-		});
-	});
-	return positions;
-}
-
 function layoutGraph(
 	graph: Graph,
 	highlightIds: ReadonlySet<string>,
 	selectedId: string | null,
+	positions: PositionMap,
 ): { nodes: RFNode[]; edges: RFEdge[] } {
 	const neighborhood = computeNeighborhood(graph, selectedId);
-	const positions = resolvePositions(graph);
 	const nodes: RFNode[] = graph.nodes.map((n) => {
 		const position = positions.get(n.id) ?? { x: 0, y: 0 };
 		const inNeighborhood = neighborhood?.nodeIds.has(n.id) ?? false;
@@ -466,9 +416,11 @@ function MeetingPrototype() {
 		}
 	}, [session.graph, selectedId]);
 
+	const positions = useForceLayout(session.graph);
 	const { nodes, edges } = useMemo(
-		() => layoutGraph(session.graph, session.highlightIds, selectedId),
-		[session.graph, session.highlightIds, selectedId],
+		() =>
+			layoutGraph(session.graph, session.highlightIds, selectedId, positions),
+		[session.graph, session.highlightIds, selectedId, positions],
 	);
 
 	const onNodeClick = useCallback((_e: React.MouseEvent, node: RFNode) => {

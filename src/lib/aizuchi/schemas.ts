@@ -46,22 +46,6 @@ export type EdgeRelation = z.infer<typeof EdgeRelation>;
 export const NodeStatus = z.enum(["active", "resolved", "parked"]);
 export type NodeStatus = z.infer<typeof NodeStatus>;
 
-/**
- * AIZ-12 — coordinates on the meeting canvas. The AI picks these so the
- * graph reads as a real mind-map (related nodes near each other, central
- * topics in the middle, branches out, room to breathe). Optional —
- * unset means "fall back to auto-layout" on the renderer side.
- *
- * Coordinate space: x and y in pixels. The canvas extends as wide as
- * the AI needs; ReactFlow handles panning. A single node is ~384×140,
- * so leave at least 80–120px of whitespace between cards.
- */
-export const NodePosition = z.object({
-	x: z.number(),
-	y: z.number(),
-});
-export type NodePosition = z.infer<typeof NodePosition>;
-
 export const NodeConfidence = z.enum(["high", "medium", "low"]);
 export type NodeConfidence = z.infer<typeof NodeConfidence>;
 
@@ -166,9 +150,6 @@ export const Node = z.object({
 		.describe(
 			"For `decision` nodes — the rejected option, when one was explicitly weighed and dropped ('chose Postgres over MySQL' → alternative: 'MySQL').",
 		),
-	position: NodePosition.optional().describe(
-		"Where this node sits on the canvas {x, y} in pixels. Set this so the graph reads as a real mind-map — group related nodes near each other, leave whitespace, avoid overlap. Once set, reuse the same position across passes unless you're intentionally re-arranging.",
-	),
 });
 export type Node = z.infer<typeof Node>;
 
@@ -209,7 +190,6 @@ export const NodeUpdate = z.object({
 	dueDate: z.string().optional(),
 	tone: z.string().optional(),
 	alternative: z.string().optional(),
-	position: NodePosition.optional(),
 });
 export type NodeUpdate = z.infer<typeof NodeUpdate>;
 
@@ -373,7 +353,6 @@ export function applyDiff(graph: Graph, diff: GraphDiff): Graph {
 			...(u.dueDate !== undefined && { dueDate: u.dueDate }),
 			...(u.tone !== undefined && { tone: u.tone }),
 			...(u.alternative !== undefined && { alternative: u.alternative }),
-			...(u.position !== undefined && { position: u.position }),
 		});
 	}
 

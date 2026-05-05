@@ -86,24 +86,9 @@ These optional fields apply to specific types. Set them whenever the speaker giv
 - **sentiment** — \`tone\`: a single word for the emotion ("frustrated", "excited", "uncertain", "aligned"). \`label\` is the topic the emotion is about; \`tone\` is the feeling.
 - **decision** — \`alternative\` when a competing option was explicitly weighed and dropped ("chose Postgres over MySQL" → \`alternative: "MySQL"\`).
 
-## Spatial layout — you compose the mind-map
+## Layout
 
-The graph isn't a list, it's a **canvas**. Set \`position: { x, y }\` on every node you add. Treat the canvas like a whiteboard and arrange nodes so the structure of the conversation is visible at a glance.
-
-**Conventions:**
-- Origin is top-left. \`x\` grows right, \`y\` grows down. Pixels.
-- A node is ~400px wide × ~150px tall. Leave **at least 100px of whitespace** between cards in any direction. Less than that and they overlap visually.
-- A typical meeting fits comfortably in a 4000×3000 region. Don't bunch everything in a corner; use space.
-
-**How to compose:**
-- **Anchor central topics in the middle.** The main subject of the meeting goes near (1500–2500, 1000–1500); branches radiate out.
-- **Group related nodes physically.** A blocker for a work_item should sit near the work_item, not in some far quadrant. A decision and the alternatives it considered should cluster together.
-- **Use direction to encode meaning.** Causes / precedes can flow left-to-right; sub-topics fan out radially; person nodes can sit at the perimeter where they introduce things.
-- **Leave the rejected alternative near the chosen decision.** If you set \`alternative\` on a decision, place an artifact/topic representing it within ~250px so the contradicts/alternative_to relation reads visually.
-- **Don't realign the world for each new node.** Once a node has a position, leave it alone unless you're re-grouping intentionally. Emit \`update_nodes\` with a new \`position\` only when you genuinely want to move something.
-- **Avoid overlap.** Before placing a new node, scan the existing positions in the input. Pick coordinates that aren't within ~120px of any existing node center.
-
-**When you don't know where to put something** — pick a reasonable spot near the most-related existing node. The renderer will fall back to auto-layout for any node with no position, so don't omit; pick.
+You don't pick coordinates — a force-directed simulation arranges the canvas. Your job is to emit the right edges. Strong relations (\`causes\`, \`supports\`, \`resolves\`, \`clarifies\`, \`contradicts\`, \`assigned_to\`, \`owns\`, \`blocks\`, \`depends_on\`) pull connected nodes tight; \`related_to\` and \`mentions\` are loose. So **prefer specific relations** over \`related_to\` whenever you can — it's not just for clarity, it's what makes the visual cluster.
 
 ## Stable ids
 
@@ -162,15 +147,15 @@ You: Talking about potatoes is important — they're easy to plant.
 You: You can take an existing potato, plant it in the ground, and it grows more potatoes. They're really sustainable. And they're great with ketchup.
 \`\`\`
 
-**Correct diff** (note the spatial layout — \`you\` anchors at left, \`potato\` is the central topic, the three sub-topics fan out to the right at varying angles):
+**Correct diff:**
 \`\`\`json
 {
   "no_changes": false,
   "add_nodes": [
-    { "id": "potato", "label": "Potato", "type": "topic", "speaker": "You", "position": { "x": 1600, "y": 1200 } },
-    { "id": "potato_propagation", "label": "Potato propagation", "type": "context", "description": "You can replant a piece of an existing potato to grow more.", "speaker": "You", "position": { "x": 2200, "y": 950 } },
-    { "id": "potato_sustainability", "label": "Sustainability", "type": "context", "description": "Potatoes are described as a sustainable food source.", "speaker": "You", "position": { "x": 2300, "y": 1250 } },
-    { "id": "potato_ketchup", "label": "Goes with ketchup", "type": "topic", "speaker": "You", "position": { "x": 2200, "y": 1550 } }
+    { "id": "potato", "label": "Potato", "type": "topic", "speaker": "You" },
+    { "id": "potato_propagation", "label": "Potato propagation", "type": "context", "description": "You can replant a piece of an existing potato to grow more.", "speaker": "You" },
+    { "id": "potato_sustainability", "label": "Sustainability", "type": "context", "description": "Potatoes are described as a sustainable food source.", "speaker": "You" },
+    { "id": "potato_ketchup", "label": "Goes with ketchup", "type": "topic", "speaker": "You" }
   ],
   "add_edges": [
     { "id": "you-mentions-potato", "from": "you", "to": "potato", "relation": "mentions" },
@@ -293,20 +278,9 @@ These optional fields apply to specific types. Set them whenever the transcript 
 - **sentiment** — \`tone\`: a single word for the emotion. \`label\` is the topic, \`tone\` is the feeling.
 - **decision** — \`alternative\` when a competing option was explicitly weighed.
 
-## Spatial layout — you compose the mind-map
+## Layout
 
-The graph is a **canvas**, not a list. Set \`position: { x, y }\` on every node you add.
-
-**Conventions:**
-- Origin top-left. \`x\` right, \`y\` down. Pixels. A node is ~400×150. Leave ≥100px whitespace between cards.
-- A typical session fits in 4000×3000.
-
-**How to compose:**
-- Anchor central topics around (1500–2500, 1000–1500); branches radiate out.
-- **Group related nodes physically.** A blocker sits near its work_item; a decision sits near its alternative; cause sits near effect.
-- Use direction: causes / precedes flow left-to-right. Sub-topics fan radially. Events can run along a horizontal time axis if there are several.
-- **Don't realign for each new node.** Once a node has a position, leave it alone unless you mean to move it. Emit \`update_nodes\` with a new \`position\` only for intentional re-groupings.
-- **Avoid overlap.** Look at the existing positions in the input; pick coordinates ≥120px from any existing node center.
+You don't pick coordinates — a force-directed simulation arranges the canvas. Your job is to emit the right edges. Strong relations (\`causes\`, \`supports\`, \`resolves\`, \`clarifies\`, \`contradicts\`, \`blocks\`, \`depends_on\`) pull connected nodes tight; \`related_to\` is loose. So **prefer specific relations** over \`related_to\` whenever you can — it's not just for clarity, it's what makes the visual cluster.
 
 ## Stable ids
 
@@ -358,14 +332,14 @@ unknown: I've been thinking about how to test the extraction pipeline faster. Th
 unknown: Transcript import sidesteps that entirely. If we drop realtime pacing for offline sources, we can chew through a thirty-minute fixture as fast as the model returns.
 \`\`\`
 
-**Correct diff** (positions: the central topic anchors near the canvas middle, the blocker sits to its left because that's the cause, the work_item sits to the right as the proposed solution):
+**Correct diff:**
 \`\`\`json
 {
   "no_changes": false,
   "add_nodes": [
-    { "id": "extraction_pipeline_testing", "label": "Faster extraction-pipeline testing", "type": "topic", "position": { "x": 1700, "y": 1200 } },
-    { "id": "realtime_pacing_constraint", "label": "Realtime pacing slows iteration", "type": "blocker", "description": "Live meetings cost real time per iteration on the graph mutation loop.", "position": { "x": 1100, "y": 1200 } },
-    { "id": "transcript_import", "label": "Transcript import (offline mode)", "type": "work_item", "description": "Drop realtime pacing for offline sources so a 30-minute fixture runs as fast as the model returns.", "position": { "x": 2350, "y": 1200 } }
+    { "id": "extraction_pipeline_testing", "label": "Faster extraction-pipeline testing", "type": "topic" },
+    { "id": "realtime_pacing_constraint", "label": "Realtime pacing slows iteration", "type": "blocker", "description": "Live meetings cost real time per iteration on the graph mutation loop." },
+    { "id": "transcript_import", "label": "Transcript import (offline mode)", "type": "work_item", "description": "Drop realtime pacing for offline sources so a 30-minute fixture runs as fast as the model returns." }
   ],
   "add_edges": [
     { "id": "blocker-blocks-extraction_pipeline_testing", "from": "realtime_pacing_constraint", "to": "extraction_pipeline_testing", "relation": "blocks" },
