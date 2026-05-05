@@ -1,5 +1,5 @@
 import type { ReactFlowProps } from "@xyflow/react";
-import { Background, ReactFlow } from "@xyflow/react";
+import { Background, Controls, MiniMap, ReactFlow } from "@xyflow/react";
 import type { ReactNode } from "react";
 import "@xyflow/react/dist/style.css";
 
@@ -30,6 +30,8 @@ export const Canvas = ({ children, ...props }: CanvasProps) => (
 		{...props}
 	>
 		<Background bgColor="var(--sidebar)" />
+		<Controls showInteractive={false} />
+		<MiniMap pannable zoomable />
 		{children}
 	</ReactFlow>
 );

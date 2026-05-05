@@ -89,6 +89,11 @@ pub struct PendingImport {
     /// AIZ-31 — distinguishes transcript-file imports from audio-file imports
     /// so the saved snapshot can carry the right `source` tag.
     pub source: MeetingSource,
+    /// AIZ-47 — when true, `chunks` is empty at stage time and the
+    /// remaining transcript flows in via `audio-import-segment` Tauri
+    /// events keyed by the meeting id. The meeting window picks
+    /// `startImportStream(id)` instead of `startImport(chunks)`.
+    pub streaming: bool,
 }
 
 /// Tauri-managed state. Both the IPC import handler (which writes) and the
@@ -146,6 +151,7 @@ pub fn stage_chunks(
                 source_file: source_file.clone(),
                 extraction_mode,
                 source,
+                streaming: false,
             },
         );
     }
@@ -159,6 +165,44 @@ pub fn stage_chunks(
         extraction_mode,
         source,
     })
+}
+
+/// AIZ-47 — stage an empty placeholder for a streaming audio import.
+/// The meeting window opens immediately with `?autostart=import`; once
+/// it mounts and calls `take_pending_import`, it sees `streaming: true`
+/// and `chunks: []`, then subscribes to `audio-import-segment` events
+/// keyed by `id` to receive the rest of the transcript as whisper
+/// produces it.
+pub fn stage_streaming_audio_pending(
+    app: &tauri::AppHandle,
+    source_file: String,
+    extraction_mode: ExtractionMode,
+) -> Result<String, String> {
+    use tauri::Manager;
+
+    let id = format!("meeting-{}", uuid::Uuid::new_v4());
+    crate::log(&format!(
+        "[import] stage_streaming_audio_pending: source_file={source_file}, mode={extraction_mode:?}, id={id}"
+    ));
+    {
+        let state = app.state::<PendingImportsState>();
+        let mut map = state
+            .map
+            .lock()
+            .map_err(|e| format!("lock pending_imports: {e}"))?;
+        map.insert(
+            id.clone(),
+            PendingImport {
+                chunks: Vec::new(),
+                source_file,
+                extraction_mode,
+                source: MeetingSource::AudioImport,
+                streaming: true,
+            },
+        );
+    }
+    crate::open_meeting_window_with_query(app, Some(&id), Some("autostart=import"));
+    Ok(id)
 }
 
 /// Parse `content`, stage it under a fresh meeting id, and open the

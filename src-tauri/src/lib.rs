@@ -708,21 +708,26 @@ fn import_meeting_from_path(
     transcript_import::stage_pending_import(&app, &content, &path)
 }
 
-/// AIZ-31 — palette / CLI flow for offline audio import. Runs whisper on
-/// the file, then stages the resulting chunks via the same path
-/// `import_meeting_from_path` uses. Blocking on whisper inference; the
-/// Tauri runtime offloads to a worker thread because this is `async fn`.
+/// AIZ-31 + AIZ-47 — palette / CLI flow for offline audio import. As of
+/// AIZ-47 this is non-blocking: the meeting window opens immediately
+/// with an empty pending import, and segments stream in as whisper
+/// produces them via the `audio-import-segment` Tauri event keyed by id.
 #[tauri::command]
-async fn import_audio_meeting_from_path(
+fn import_audio_meeting_from_path(
     app: AppHandle,
     path: String,
-) -> Result<transcript_import::StagedImport, String> {
+) -> Result<audio_import::StreamingImportStarted, String> {
     let path_buf = std::path::PathBuf::from(&path);
-    tauri::async_runtime::spawn_blocking(move || {
-        audio_import::stage_pending_audio_import(&app, &path_buf)
-    })
-    .await
-    .map_err(|e| format!("audio import task failed: {e}"))?
+    audio_import::start_streaming_audio_import(&app, &path_buf)
+}
+
+/// AIZ-47 — meeting window's close handler invokes this so a still-running
+/// whisper transcription stops instead of burning CPU on output that
+/// has nowhere to go. Idempotent: a missing or already-finished import
+/// is a no-op.
+#[tauri::command]
+fn cancel_audio_import(app: AppHandle, id: String) {
+    audio_import::cancel_streaming_audio_import(&app, &id);
 }
 
 // ---------------------------------------------------------------------------
@@ -1451,6 +1456,7 @@ pub fn run() {
             phase: Mutex::new(("idle".to_string(), "Ready".to_string())),
         })
         .manage(transcript_import::PendingImportsState::default())
+        .manage(audio_import::AudioImportsState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
@@ -1498,6 +1504,7 @@ pub fn run() {
             take_pending_import,
             import_meeting_from_path,
             import_audio_meeting_from_path,
+            cancel_audio_import,
             log_from_frontend,
         ])
         .setup(|app| {

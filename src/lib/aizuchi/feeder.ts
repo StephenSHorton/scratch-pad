@@ -1,4 +1,4 @@
-import { listen } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { wordCount } from "./batcher";
 import type { TranscriptChunk } from "./schemas";
 
@@ -175,5 +175,151 @@ export async function* consumeLiveStream(
 		}
 	} finally {
 		unlisten();
+	}
+}
+
+export interface AudioImportStreamOptions {
+	/** The pending-import id; events with a different `importId` are ignored. */
+	importId: string;
+	sizeThresholdWords: number;
+	timeThresholdMs: number;
+	/** Optional ceiling — flush a batch once this many chunks accumulate. */
+	chunkCountThreshold?: number;
+	signal: FeederSignal;
+	/** Fires once per chunk as it arrives. */
+	onChunk?: (chunk: TranscriptChunk) => void;
+	/** Fires when the backend reports `audio-import-progress` (each
+	 * integer-percent advance during whisper inference). */
+	onProgress?: (percent: number) => void;
+	/** Fires once when the backend reports `audio-import-done`. */
+	onDone?: (segmentCount: number) => void;
+	/** Fires once when the backend reports `audio-import-error`. */
+	onError?: (message: string) => void;
+}
+
+/**
+ * AIZ-47 — consumes Tauri `audio-import-segment` events emitted by the
+ * Rust whisper worker and yields batches in the same shape as
+ * `feedTranscriptBatches`. Generator returns when `audio-import-done`
+ * fires for the matching `importId` or when the signal is cancelled;
+ * throws when `audio-import-error` fires.
+ */
+export async function* consumeAudioImportStream(
+	opts: AudioImportStreamOptions,
+): AsyncGenerator<Batch> {
+	const queue: TranscriptChunk[] = [];
+	let resolveNext: (() => void) | null = null;
+	let streamFinished = false;
+	let streamError: string | null = null;
+
+	const wakeWaiter = () => {
+		if (resolveNext) {
+			resolveNext();
+			resolveNext = null;
+		}
+	};
+
+	const unlistenSegment: UnlistenFn = await listen<{
+		importId: string;
+		chunk: TranscriptChunk;
+	}>("audio-import-segment", (event) => {
+		if (event.payload.importId !== opts.importId) return;
+		const chunk = event.payload.chunk;
+		queue.push(chunk);
+		opts.onChunk?.(chunk);
+		wakeWaiter();
+	});
+
+	const unlistenProgress: UnlistenFn = await listen<{
+		importId: string;
+		percent: number;
+	}>("audio-import-progress", (event) => {
+		if (event.payload.importId !== opts.importId) return;
+		opts.onProgress?.(event.payload.percent);
+	});
+
+	const unlistenDone: UnlistenFn = await listen<{
+		importId: string;
+		segmentCount: number;
+	}>("audio-import-done", (event) => {
+		if (event.payload.importId !== opts.importId) return;
+		streamFinished = true;
+		opts.onDone?.(event.payload.segmentCount);
+		wakeWaiter();
+	});
+
+	const unlistenError: UnlistenFn = await listen<{
+		importId: string;
+		message: string;
+	}>("audio-import-error", (event) => {
+		if (event.payload.importId !== opts.importId) return;
+		streamFinished = true;
+		streamError = event.payload.message;
+		opts.onError?.(event.payload.message);
+		wakeWaiter();
+	});
+
+	try {
+		let buf: TranscriptChunk[] = [];
+		let words = 0;
+		let bufStartMs = 0;
+
+		while (!opts.signal.cancelled) {
+			while (queue.length === 0 && !streamFinished && !opts.signal.cancelled) {
+				await new Promise<void>((r) => {
+					resolveNext = r;
+				});
+			}
+			if (opts.signal.cancelled) return;
+
+			// Once whisper signals done, dump the entire remaining queue as
+			// one final batch. The streaming case earns its keep while
+			// whisper is still working — that's when the user wants the
+			// graph to populate early. Past that point, splitting the
+			// trailer into many small batches just adds gemma roundtrips
+			// (and on a 5+ minute recording, each extra roundtrip is
+			// visible to the user as another "thinking…" cycle). Gemma
+			// handles one large drain batch fine because the audio import
+			// path forces Substance mode, which already prompts the model
+			// for paragraph-level reasoning.
+			if (streamFinished) {
+				while (queue.length > 0) {
+					const chunk = queue.shift();
+					if (!chunk) break;
+					if (buf.length === 0) bufStartMs = chunk.startMs;
+					buf.push(chunk);
+					words += wordCount(chunk.text);
+				}
+				if (streamError) throw new Error(streamError);
+				if (buf.length > 0) {
+					yield { chunks: buf, wordCount: words };
+				}
+				return;
+			}
+
+			const chunk = queue.shift();
+			if (!chunk) continue;
+
+			if (buf.length === 0) bufStartMs = chunk.startMs;
+			buf.push(chunk);
+			words += wordCount(chunk.text);
+
+			const elapsed = chunk.endMs - bufStartMs;
+			const sizeMet = words >= opts.sizeThresholdWords;
+			const timeMet = elapsed >= opts.timeThresholdMs;
+			const countMet =
+				opts.chunkCountThreshold !== undefined &&
+				buf.length >= opts.chunkCountThreshold;
+			if (sizeMet || timeMet || countMet) {
+				yield { chunks: buf, wordCount: words };
+				buf = [];
+				words = 0;
+			}
+		}
+	} finally {
+		unlistenSegment();
+		unlistenProgress();
+		unlistenDone();
+		unlistenError();
 	}
 }

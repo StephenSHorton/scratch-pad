@@ -11,6 +11,7 @@ import {
 import { formatChunkBatch } from "@/lib/aizuchi/batcher";
 import {
 	type Batch,
+	consumeAudioImportStream,
 	consumeLiveStream,
 	type FeederSignal,
 	feedTranscriptBatches,
@@ -47,6 +48,19 @@ const TIME_THRESHOLD_MS = 25_000;
 const LIVE_SIZE_THRESHOLD_WORDS = 18;
 const LIVE_TIME_THRESHOLD_MS = 7_000;
 const LIVE_CHUNK_COUNT_THRESHOLD = 3;
+// Streaming audio import (AIZ-47) — match the non-streaming import
+// path's tuning so gemma gets the same paragraph-sized batches whether
+// the transcript came from a static file or whisper's live segment
+// stream. Whisper segments often span 5–15 seconds of audio each, so
+// a tighter time bound (e.g. 15s) fires on the very first chunk and
+// floods gemma with tiny batches. 25s of audio gives ~60 words at
+// normal speaking pace, which is exactly when the size bound fires —
+// the time bound becomes the safety net for sparse / silent stretches.
+// `chunkCountThreshold` is a high safety cap for unusually fragmented
+// speech; in practice size fires first.
+const IMPORT_STREAM_SIZE_THRESHOLD_WORDS = SIZE_THRESHOLD_WORDS;
+const IMPORT_STREAM_TIME_THRESHOLD_MS = TIME_THRESHOLD_MS;
+const IMPORT_STREAM_CHUNK_COUNT_THRESHOLD = 15;
 const HIGHLIGHT_MS = 1500;
 export const SPEED_MULTIPLIER = 4;
 /** Sliding-window of transcript fed to the model for coreference / context. */
@@ -119,6 +133,21 @@ export interface MeetingSession {
 		extractionMode: ExtractionMode,
 		source?: MeetingSource,
 	) => Promise<void>;
+	startImportStream: (
+		importId: string,
+		sourceFile: string,
+		extractionMode: ExtractionMode,
+		source?: MeetingSource,
+	) => Promise<void>;
+	/** AIZ-47 — number of whisper segments received so far on the active
+	 * streaming-import session. 0 outside of streaming imports. */
+	importStreamSegmentCount: number;
+	/** AIZ-47 — whisper inference progress 0..=100 driven by whisper.cpp's
+	 * progress callback. 0 outside of streaming imports. */
+	importStreamProgress: number;
+	/** True once whisper signals `audio-import-done` (or aborts/errors)
+	 * for the active streaming import. Lets the status pill clear. */
+	importStreamFinished: boolean;
 	pauseDemo: () => void;
 	resumeDemo: () => void;
 	resetDemo: () => void;
@@ -148,6 +177,13 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 	const [archivedAt, setArchivedAt] = useState<number | null>(null);
 	const [name, setName] = useState<string | null>(null);
 	const [nameLockedByUser, setNameLockedByUser] = useState(false);
+	// AIZ-47 — surfaced by MeetingStatusPanel as a "Whisper transcribing…"
+	// pill. `importStreamFinished` lets the pill clear once whisper signals
+	// done; the count alone isn't enough because the producer might emit a
+	// final batch and then go quiet on cancel.
+	const [importStreamSegmentCount, setImportStreamSegmentCount] = useState(0);
+	const [importStreamProgress, setImportStreamProgress] = useState(0);
+	const [importStreamFinished, setImportStreamFinished] = useState(false);
 
 	const consumedChunksRef = useRef(0);
 	const thoughtsRef = useRef<AIThoughtRecord[]>([]);
@@ -261,6 +297,9 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		setPasses([]);
 		setArchivedAt(null);
 		setStatus("listening");
+		setImportStreamSegmentCount(0);
+		setImportStreamProgress(0);
+		setImportStreamFinished(false);
 		// AIZ-16 — clear naming state for a fresh session. Resume reuses
 		// existing values and goes through resumeLive instead.
 		nameRef.current = null;
@@ -616,6 +655,66 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		await runSession(batches, "import", startGraph);
 	};
 
+	/**
+	 * AIZ-47 — streaming counterpart to `startImport`. The whisper worker
+	 * thread emits `audio-import-segment` events keyed by `importId` as
+	 * inference produces them; we feed each one into the same batch loop
+	 * `startImport` uses. The meeting window opens with no chunks staged
+	 * and populates the graph as whisper races.
+	 */
+	const startImportStream = async (
+		importId: string,
+		sourceFile: string,
+		extractionMode: ExtractionMode,
+		source: MeetingSource = "audio-import",
+	) => {
+		const dlog = (msg: string) =>
+			invoke("log_from_frontend", {
+				msg: `[import-stream] ${msg}`,
+			}).catch(() => {});
+		dlog(
+			`startImportStream: importId=${importId} sourceFile=${sourceFile} mode=${extractionMode} source=${source}`,
+		);
+		if (runningRef.current) {
+			dlog("startImportStream bailed: runningRef already true");
+			return;
+		}
+		runningRef.current = true;
+		const startGraph = resetSessionState("import");
+		meetingIdRef.current = meetingId === "test" ? newMeetingId() : meetingId;
+		startedAtRef.current = Date.now();
+		sessionSavedRef.current = false;
+		sourceRef.current = source;
+		sourceFileRef.current = sourceFile;
+		extractionModeRef.current = extractionMode;
+
+		const batches = consumeAudioImportStream({
+			importId,
+			sizeThresholdWords: IMPORT_STREAM_SIZE_THRESHOLD_WORDS,
+			timeThresholdMs: IMPORT_STREAM_TIME_THRESHOLD_MS,
+			chunkCountThreshold: IMPORT_STREAM_CHUNK_COUNT_THRESHOLD,
+			signal: signalRef.current,
+			onChunk: (chunk) => {
+				pushChunk(chunk);
+				setImportStreamSegmentCount((n) => n + 1);
+			},
+			onProgress: (percent) => {
+				setImportStreamProgress(percent);
+			},
+			onDone: (segmentCount) => {
+				dlog(`audio-import-done: ${segmentCount} segment(s)`);
+				setImportStreamProgress(100);
+				setImportStreamFinished(true);
+			},
+			onError: (message) => {
+				dlog(`audio-import-error: ${message}`);
+				setImportStreamFinished(true);
+				setError(message);
+			},
+		});
+		await runSession(batches, "import", startGraph);
+	};
+
 	const startDemo = async () => {
 		if (runningRef.current) return;
 		runningRef.current = true;
@@ -753,7 +852,9 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 	const resetDemo = () => {
 		// Archived view: Reset is repurposed to "Close" — close the meeting window.
 		if (status === "archived") {
-			getCurrentWindow().close().catch(() => {});
+			getCurrentWindow()
+				.close()
+				.catch(() => {});
 			return;
 		}
 		signalRef.current.cancelled = true;
@@ -852,6 +953,10 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		resumeLive,
 		stopLive,
 		startImport,
+		startImportStream,
+		importStreamSegmentCount,
+		importStreamProgress,
+		importStreamFinished,
 		pauseDemo,
 		resumeDemo,
 		resetDemo,

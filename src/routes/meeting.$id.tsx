@@ -396,11 +396,17 @@ function MeetingPrototype() {
 				// and feed them to startImport. `take_pending_import` returns
 				// `null` if the id has no entry (already consumed, or never
 				// staged) — in that case there's nothing to do.
+				// AIZ-47 — if `streaming: true`, the staged entry has no
+				// chunks; whisper is producing them right now and emitting
+				// `audio-import-segment` events keyed by `id`. Branch to
+				// `startImportStream` so the existing batch loop reads
+				// from the stream instead of a static array.
 				invoke<{
 					chunks: TranscriptChunk[];
 					sourceFile: string;
 					extractionMode: ExtractionMode;
 					source: MeetingSource;
+					streaming?: boolean;
 				} | null>("take_pending_import", { id })
 					.then((pending) => {
 						if (!pending) {
@@ -408,6 +414,14 @@ function MeetingPrototype() {
 								`[meeting] no pending import for ${id} — nothing to do`,
 							);
 							return;
+						}
+						if (pending.streaming) {
+							return session.startImportStream(
+								id,
+								pending.sourceFile,
+								pending.extractionMode,
+								pending.source,
+							);
 						}
 						return session.startImport(
 							pending.chunks,
@@ -441,6 +455,14 @@ function MeetingPrototype() {
 			unlistenPromise.then((fn) => fn()).catch(() => {});
 		};
 	}, [id]);
+
+	// AIZ-47 — cancel-on-close was originally wired here so closing the
+	// meeting window mid-import would stop whisper. Pulling it for now:
+	// the React-unmount path runs twice under Strict Mode in dev (cancels
+	// before the import starts), and the Tauri `onCloseRequested` path
+	// appeared to interfere with the close itself. The backend
+	// `cancel_audio_import` command stays — re-wire from a more reliable
+	// signal in a follow-up.
 
 	const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -513,6 +535,9 @@ function MeetingPrototype() {
 										archivedAt={session.archivedAt}
 										name={session.name}
 										nameLockedByUser={session.nameLockedByUser}
+										importStreamSegmentCount={session.importStreamSegmentCount}
+										importStreamProgress={session.importStreamProgress}
+										importStreamFinished={session.importStreamFinished}
 										onSetName={session.setMeetingName}
 										onStartDemo={session.startDemo}
 										onStartLive={session.startLive}
