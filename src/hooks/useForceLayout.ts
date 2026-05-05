@@ -43,11 +43,11 @@ const RELATION_LINK: Record<
 	owns: { distance: 280, strength: 0.6 },
 	depends_on: { distance: 280, strength: 0.55 },
 	blocks: { distance: 240, strength: 0.7 },
-	related_to: { distance: 360, strength: 0.25 },
+	related_to: { distance: 320, strength: 0.4 },
 	decides: { distance: 260, strength: 0.55 },
 	asks: { distance: 240, strength: 0.5 },
 	answers: { distance: 240, strength: 0.6 },
-	mentions: { distance: 380, strength: 0.2 },
+	mentions: { distance: 340, strength: 0.35 },
 	assigned_to: { distance: 240, strength: 0.6 },
 	causes: { distance: 240, strength: 0.7 },
 	contradicts: { distance: 280, strength: 0.6 },
@@ -149,7 +149,7 @@ export function useForceLayout(graph: Graph): PositionMap {
 			simRef.current = forceSimulation<SimNode, SimLink>(simNodes)
 				.force("link", link)
 				.force("charge", forceManyBody<SimNode>().strength(-1400))
-				.force("center", forceCenter(0, 0).strength(0.05))
+				.force("center", forceCenter(0, 0).strength(0.12))
 				.force("collide", forceCollide<SimNode>(COLLISION_RADIUS).strength(0.9))
 				.alphaDecay(0.05)
 				.alphaMin(0.002)
