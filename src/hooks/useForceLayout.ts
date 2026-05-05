@@ -48,6 +48,10 @@ const COLLISION_RADIUS = Math.hypot(CARD_W, CARD_H) / 2 + 24;
  */
 const RING_SPACING = 380;
 const DISCONNECTED_RADIUS_FALLBACK = 3000;
+// Focus-mode "buffer zone" radius around world (0,0). Dimmed/pinned nodes
+// inside this radius get nudged outward along their current angle so they
+// don't overlap the focused subgraph rearranging at the centre.
+const FOCUS_BUFFER_RADIUS = 700;
 
 const RELATION_LINK: Record<
 	EdgeRelation,
@@ -177,6 +181,92 @@ function neighborhoodIds(graph: Graph, focused: string): Set<string> {
 	return ids;
 }
 
+/**
+ * AIZ-48 — focus-mode collision force. Like d3's forceCollide but only checks
+ * pairs where both nodes pass the `isActive` predicate. In focus mode the
+ * highlighted neighborhood would otherwise still avoid the pinned, dimmed
+ * nodes via collide (and forceCollide's per-node radius isn't enough — a
+ * radius-0 frozen node still acts as a point the active node's radius pushes
+ * away from). With this, the focused subgraph re-arranges as if the rest of
+ * the graph isn't there, while the pinned nodes hold their positions
+ * untouched. O(N²) per tick on the active subset; for ≤20 neighbors that's
+ * 400 distance checks, which is negligible.
+ */
+/**
+ * AIZ-48 — focus-mode buffer force. In focus mode the dimmed (pinned) nodes
+ * outside the neighborhood that happen to sit near the focus centre would
+ * visually overlap with the active subgraph rearranging itself there. This
+ * force lerps each dimmed node's pinned position outward along its current
+ * angle until it sits at or beyond `bufferRadius`, clearing the centre. The
+ * 0.08 per-tick easing combines with d3's velocityDecay so the push-out
+ * animates smoothly rather than snapping. Active (in-neighborhood) nodes
+ * are skipped — the buffer only acts on the dimmed surrounding ring.
+ */
+function focusBuffer(
+	bufferRadius: number,
+	isActive: (node: SimNode) => boolean,
+) {
+	let nodes: SimNode[] = [];
+
+	const force = function (this: unknown) {
+		for (const n of nodes) {
+			if (isActive(n)) continue;
+			const fx = n.fx ?? n.x ?? 0;
+			const fy = n.fy ?? n.y ?? 0;
+			const r = Math.hypot(fx, fy);
+			if (r >= bufferRadius || r === 0) continue;
+			const scale = bufferRadius / r;
+			const targetX = fx * scale;
+			const targetY = fy * scale;
+			n.fx = fx + (targetX - fx) * 0.08;
+			n.fy = fy + (targetY - fy) * 0.08;
+		}
+	};
+	(force as unknown as { initialize: (nodes: SimNode[]) => void }).initialize =
+		(n) => {
+			nodes = n;
+		};
+	return force;
+}
+
+function focusCollide(
+	radius: number,
+	strength: number,
+	isActive: (node: SimNode) => boolean,
+) {
+	let active: SimNode[] = [];
+	const minDist = radius * 2;
+	const minDist2 = minDist * minDist;
+
+	const force = function (this: unknown) {
+		for (let i = 0; i < active.length; i++) {
+			const a = active[i];
+			const ax = a.x ?? 0;
+			const ay = a.y ?? 0;
+			for (let j = i + 1; j < active.length; j++) {
+				const b = active[j];
+				const dx = (b.x ?? 0) - ax;
+				const dy = (b.y ?? 0) - ay;
+				const d2 = dx * dx + dy * dy;
+				if (d2 >= minDist2 || d2 === 0) continue;
+				const dist = Math.sqrt(d2);
+				const overlap = ((minDist - dist) / dist) * strength * 0.5;
+				const ox = dx * overlap;
+				const oy = dy * overlap;
+				a.vx = (a.vx ?? 0) - ox;
+				a.vy = (a.vy ?? 0) - oy;
+				b.vx = (b.vx ?? 0) + ox;
+				b.vy = (b.vy ?? 0) + oy;
+			}
+		}
+	};
+	(force as unknown as { initialize: (nodes: SimNode[]) => void }).initialize =
+		(nodes) => {
+			active = nodes.filter(isActive);
+		};
+	return force;
+}
+
 export function useForceLayout(
 	graph: Graph,
 	selectedId: string | null = null,
@@ -289,6 +379,32 @@ export function useForceLayout(
 			.distance((l) => (l as SimLink & { distance?: number }).distance ?? 280)
 			.strength((l) => (l as SimLink & { strength?: number }).strength ?? 0.4);
 
+		// In focus mode, charge and collide are filtered to ignore non-
+		// neighborhood nodes. Charge uses per-node strength=0 for the dimmed
+		// nodes (built into d3's forceManyBody — a strength-0 node contributes
+		// nothing to the force field). Collide uses a custom replacement
+		// because forceCollide's per-node radius doesn't actually exclude a
+		// node from the simulation; the subgraph would still avoid the pinned
+		// dim nodes' point positions otherwise.
+		const chargeStrength: (n: SimNode) => number =
+			focused && neighborhood
+				? (n) => (neighborhood.has(n.id) ? -600 : 0)
+				: () => -600;
+		const charge = forceManyBody<SimNode>().strength(chargeStrength);
+
+		const collide =
+			focused && neighborhood
+				? focusCollide(COLLISION_RADIUS, 0.9, (n) => neighborhood.has(n.id))
+				: forceCollide<SimNode>(COLLISION_RADIUS).strength(0.9);
+
+		// Buffer force only runs in focus mode. `null` clears it on unfocus
+		// so the dimmed nodes stay where d3-force last placed them as they
+		// snap back into the full layout.
+		const buffer =
+			focused && neighborhood
+				? focusBuffer(FOCUS_BUFFER_RADIUS, (n) => neighborhood.has(n.id))
+				: null;
+
 		// BFS-radial — every node connected to the hub gets pulled to a
 		// ring at distance (bfs depth × RING_SPACING). Disabled in focus mode
 		// because the rings are anchored on the original hub, which would
@@ -327,9 +443,10 @@ export function useForceLayout(
 		if (!simRef.current) {
 			simRef.current = forceSimulation<SimNode, SimLink>(simNodes)
 				.force("link", link)
-				.force("charge", forceManyBody<SimNode>().strength(-600))
+				.force("charge", charge)
 				.force("radial", radial)
-				.force("collide", forceCollide<SimNode>(COLLISION_RADIUS).strength(0.9))
+				.force("collide", collide)
+				.force("buffer", buffer)
 				.alphaDecay(0.05)
 				.velocityDecay(VELOCITY_DECAY)
 				.alphaMin(0.002)
@@ -353,9 +470,14 @@ export function useForceLayout(
 		} else {
 			simRef.current.nodes(simNodes);
 			simRef.current.force("link", link);
-			// Reattach (or clear) the radial force. Passing `null` removes it,
-			// which is what focus mode wants.
+			// Charge, collide, radial, and buffer all swap between focus and
+			// normal mode whenever selectedId toggles, so they have to be
+			// re-attached on every update — passing `null` removes a force,
+			// which is how unfocus clears radial and buffer.
+			simRef.current.force("charge", charge);
 			simRef.current.force("radial", radial);
+			simRef.current.force("collide", collide);
+			simRef.current.force("buffer", buffer);
 			simRef.current.velocityDecay(VELOCITY_DECAY).alpha(alphaBump).restart();
 		}
 	}, [graph, selectedId]);
