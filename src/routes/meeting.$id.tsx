@@ -5,12 +5,13 @@ import {
 	ReactFlowProvider,
 	type Edge as RFEdge,
 	type Node as RFNode,
+	useReactFlow,
 } from "@xyflow/react";
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+	type PanelImperativeHandle,
 	Group as ResizeGroup,
 	Panel as ResizePanel,
-	type PanelImperativeHandle,
 	Separator as ResizeSeparator,
 } from "react-resizable-panels";
 import { Canvas } from "@/components/ai-elements/canvas";
@@ -21,56 +22,134 @@ import { LiveTranscript } from "@/components/aizuchi/LiveTranscript";
 import { MeetingOutline } from "@/components/aizuchi/MeetingOutline";
 import { MeetingStatusPanel } from "@/components/aizuchi/MeetingStatusPanel";
 import { useCommandPaletteHotkey } from "@/hooks/useCommandPaletteHotkey";
+import { type PositionMap, useForceLayout } from "@/hooks/useForceLayout";
+import { useMeetingDebugSnapshot } from "@/hooks/useMeetingDebugSnapshot";
 import { useMeetingSession } from "@/hooks/useMeetingSession";
 import type { ExtractionMode, MeetingSource } from "@/lib/aizuchi/persistence";
 import type {
 	Edge as AzEdge,
 	Node as AzNode,
 	Graph,
-	NodeType,
 	TranscriptChunk,
 } from "@/lib/aizuchi/schemas";
 
-const COLUMN_X: Record<NodeType, number> = {
-	person: 0,
-	topic: 380,
-	work_item: 760,
-	action_item: 1140,
-	decision: 1520,
-	blocker: 1900,
-	question: 2280,
-	context: 2660,
-};
+// Approximate dimensions of a rendered AizuchiNode card (matches `w-sm` in
+// the shell). Used by the position-aware handle picker so the edge endpoints
+// land on the correct side of the card.
+const NODE_WIDTH = 384;
+const NODE_HEIGHT = 140;
 
-const ROW_HEIGHT = 160;
+type HandleSide = "left" | "right" | "top" | "bottom";
+
+/**
+ * AIZ-12 — pick which side of each node an edge should attach to so the
+ * rendered path takes the shortest geometric route. We compare the
+ * vector from source-center to target-center: whichever axis dominates
+ * decides the side. This avoids the "weird path" failure mode where an
+ * edge from a node on the right loops back around to the left handle.
+ */
+function pickHandles(
+	from: { x: number; y: number },
+	to: { x: number; y: number },
+): { sourceHandle: string; targetHandle: string } {
+	const fromCenter = {
+		x: from.x + NODE_WIDTH / 2,
+		y: from.y + NODE_HEIGHT / 2,
+	};
+	const toCenter = { x: to.x + NODE_WIDTH / 2, y: to.y + NODE_HEIGHT / 2 };
+	const dx = toCenter.x - fromCenter.x;
+	const dy = toCenter.y - fromCenter.y;
+
+	let sourceSide: HandleSide;
+	let targetSide: HandleSide;
+	if (Math.abs(dx) >= Math.abs(dy)) {
+		sourceSide = dx >= 0 ? "right" : "left";
+		targetSide = dx >= 0 ? "left" : "right";
+	} else {
+		sourceSide = dy >= 0 ? "bottom" : "top";
+		targetSide = dy >= 0 ? "top" : "bottom";
+	}
+	return { sourceHandle: `s-${sourceSide}`, targetHandle: `t-${targetSide}` };
+}
 
 // Drag the outline below this percentage and it snaps closed on release.
 const OUTLINE_COLLAPSE_THRESHOLD = 20;
 
+interface Neighborhood {
+	nodeIds: ReadonlySet<string>;
+	edgeIds: ReadonlySet<string>;
+}
+
+function computeNeighborhood(
+	graph: Graph,
+	selectedId: string | null,
+): Neighborhood | null {
+	if (!selectedId) return null;
+	const nodeIds = new Set<string>([selectedId]);
+	const edgeIds = new Set<string>();
+	for (const e of graph.edges) {
+		if (e.from === selectedId) {
+			nodeIds.add(e.to);
+			edgeIds.add(e.id);
+		} else if (e.to === selectedId) {
+			nodeIds.add(e.from);
+			edgeIds.add(e.id);
+		}
+	}
+	return { nodeIds, edgeIds };
+}
+
 function layoutGraph(
 	graph: Graph,
 	highlightIds: ReadonlySet<string>,
+	selectedId: string | null,
+	positions: PositionMap,
 ): { nodes: RFNode[]; edges: RFEdge[] } {
-	const counters: Partial<Record<NodeType, number>> = {};
+	const neighborhood = computeNeighborhood(graph, selectedId);
 	const nodes: RFNode[] = graph.nodes.map((n) => {
-		const idx = counters[n.type] ?? 0;
-		counters[n.type] = idx + 1;
+		const position = positions.get(n.id) ?? { x: 0, y: 0 };
+		const inNeighborhood = neighborhood?.nodeIds.has(n.id) ?? false;
+		const isFocused = neighborhood ? n.id === selectedId : false;
+		const dimmed = !!neighborhood && !inNeighborhood;
 		return {
 			id: n.id,
 			type: "aizuchi",
-			position: { x: COLUMN_X[n.type], y: idx * ROW_HEIGHT },
-			data: { node: n, highlighted: highlightIds.has(n.id) },
+			position,
+			data: {
+				node: n,
+				highlighted: highlightIds.has(n.id),
+				inNeighborhood,
+				isFocused,
+				dimmed,
+			},
 		};
 	});
 
-	const edges: RFEdge[] = graph.edges.map((e) => ({
-		id: e.id,
-		source: e.from,
-		target: e.to,
-		type: "animated",
-		label: e.relation,
-		data: e,
-	}));
+	const edges: RFEdge[] = graph.edges.map((e) => {
+		const fromPos = positions.get(e.from);
+		const toPos = positions.get(e.to);
+		const handles =
+			fromPos && toPos
+				? pickHandles(fromPos, toPos)
+				: { sourceHandle: "s-right", targetHandle: "t-left" };
+		const inNeighborhood = neighborhood?.edgeIds.has(e.id) ?? false;
+		const dimmed = !!neighborhood && !inNeighborhood;
+		return {
+			id: e.id,
+			source: e.from,
+			target: e.to,
+			sourceHandle: handles.sourceHandle,
+			targetHandle: handles.targetHandle,
+			type: "animated",
+			label: e.relation,
+			data: e,
+			style: dimmed
+				? { stroke: "var(--muted-foreground)", strokeOpacity: 0.15 }
+				: inNeighborhood
+					? { stroke: "var(--primary)", strokeWidth: 2 }
+					: undefined,
+		};
+	});
 
 	return { nodes, edges };
 }
@@ -80,6 +159,93 @@ const edgeTypes = {
 	animated: AIEdge.Animated,
 	temporary: AIEdge.Temporary,
 } as const;
+
+/**
+ * AIZ-12 — keep the camera in step with the d3-force simulation.
+ *
+ * Two flows, both triggered by `settledAt` updates (the simulation's
+ * `end` event timestamp from useForceLayout):
+ *
+ * 1. **First paint** — the meeting opens with all nodes seeded near
+ *    (0,0). The simulation needs ~1.5–2s to spread them out. Frame the
+ *    whole graph at the FIRST settle, never before. Otherwise the
+ *    camera locks onto an empty origin region and stays there while
+ *    the nodes flow outward.
+ *
+ * 2. **AI follow** — when gemma touches new nodes, we record them as
+ *    "pending fit" and wait for the next settle. Same reason: the
+ *    sim restarts (alpha bumps to 0.6) when the graph changes, and we
+ *    don't want to chase mid-flight positions.
+ */
+function CameraFollower({
+	highlightIds,
+	graphNodeCount,
+	settledAt,
+}: {
+	highlightIds: ReadonlySet<string>;
+	graphNodeCount: number;
+	settledAt: number;
+}) {
+	const { fitView, setCenter } = useReactFlow();
+	const previousIdsRef = useRef<ReadonlySet<string>>(new Set());
+	const pendingFitRef = useRef<string[] | null>(null);
+	const firstFitDoneRef = useRef(false);
+	const initialFrameDoneRef = useRef(false);
+
+	// As soon as the graph has any node, snap the viewport to a stable
+	// wide view of the canvas center. The sim seeds new nodes near (0,0)
+	// and takes ~1.8s to spread them — without this, the user stares at a
+	// clump of overlapping cards before the first settle. Instant snap
+	// (duration: 0) so the user doesn't see a startup animation; a real
+	// fitView animates in once `settledAt` fires below.
+	useEffect(() => {
+		if (initialFrameDoneRef.current) return;
+		if (graphNodeCount === 0) return;
+		initialFrameDoneRef.current = true;
+		setCenter(0, 0, { zoom: 0.4, duration: 0 });
+	}, [graphNodeCount, setCenter]);
+
+	// Track new highlightIds → queue them for the next settle. We don't
+	// fire fitView from here; the settle effect below does it.
+	useEffect(() => {
+		const previous = previousIdsRef.current;
+		const newlyTouched: string[] = [];
+		for (const id of highlightIds) {
+			if (!previous.has(id)) newlyTouched.push(id);
+		}
+		previousIdsRef.current = highlightIds;
+		if (newlyTouched.length > 0) {
+			pendingFitRef.current = newlyTouched;
+		}
+	}, [highlightIds]);
+
+	// Camera moves on settle. AI-follow takes priority over first-paint
+	// (if both are queued in the same settle, the user cares more about
+	// where gemma was working than about a panned-out overview).
+	useEffect(() => {
+		if (settledAt === 0) return;
+		if (graphNodeCount === 0) return;
+
+		const pending = pendingFitRef.current;
+		pendingFitRef.current = null;
+		if (pending && pending.length > 0) {
+			firstFitDoneRef.current = true;
+			fitView({
+				nodes: pending.map((id) => ({ id })),
+				duration: 700,
+				padding: 0.6,
+				maxZoom: 0.8,
+			});
+			return;
+		}
+		if (!firstFitDoneRef.current) {
+			firstFitDoneRef.current = true;
+			fitView({ duration: 600, padding: 0.3, maxZoom: 0.8 });
+		}
+	}, [settledAt, graphNodeCount, fitView]);
+
+	return null;
+}
 
 function MeetingPrototype() {
 	useCommandPaletteHotkey();
@@ -276,10 +442,37 @@ function MeetingPrototype() {
 		};
 	}, [id]);
 
+	const [selectedId, setSelectedId] = useState<string | null>(null);
+
+	// Drop the focused selection if its node disappears (merge / remove).
+	useEffect(() => {
+		if (!selectedId) return;
+		if (!session.graph.nodes.some((n) => n.id === selectedId)) {
+			setSelectedId(null);
+		}
+	}, [session.graph, selectedId]);
+
+	const { positions, settledAt } = useForceLayout(session.graph);
 	const { nodes, edges } = useMemo(
-		() => layoutGraph(session.graph, session.highlightIds),
-		[session.graph, session.highlightIds],
+		() =>
+			layoutGraph(session.graph, session.highlightIds, selectedId, positions),
+		[session.graph, session.highlightIds, selectedId, positions],
 	);
+
+	useMeetingDebugSnapshot({
+		id,
+		name: session.name ?? undefined,
+		status: session.status,
+		mode: session.mode === "idle" ? undefined : session.mode,
+		graph: session.graph,
+		positions,
+		highlightIds: session.highlightIds,
+	});
+
+	const onNodeClick = useCallback((_e: React.MouseEvent, node: RFNode) => {
+		setSelectedId((current) => (current === node.id ? null : node.id));
+	}, []);
+	const onPaneClick = useCallback(() => setSelectedId(null), []);
 
 	return (
 		<div
@@ -300,7 +493,14 @@ function MeetingPrototype() {
 								edges={edges}
 								nodeTypes={nodeTypes}
 								edgeTypes={edgeTypes}
+								onNodeClick={onNodeClick}
+								onPaneClick={onPaneClick}
 							>
+								<CameraFollower
+									highlightIds={session.highlightIds}
+									graphNodeCount={session.graph.nodes.length}
+									settledAt={settledAt}
+								/>
 								<Panel position="top-left">
 									<MeetingStatusPanel
 										status={session.status}

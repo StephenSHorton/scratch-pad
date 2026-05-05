@@ -37,8 +37,7 @@ const ACTIONS: Action[] = [
 	{
 		id: "import_meeting",
 		label: "Import meeting…",
-		description:
-			"Process a transcript or recording (.txt / .md / .json / .wav / .mp3 / .m4a / .flac / .mp4 / .mov / .webm / .mkv) as a meeting",
+		description: "Process a transcript or recording as a meeting",
 	},
 	{
 		id: "new_pad",
@@ -150,6 +149,10 @@ export function Palette() {
 	const inputRef = useRef<HTMLInputElement>(null);
 	const browseInputRef = useRef<HTMLInputElement>(null);
 	const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	// AIZ-12 — refs to each row by index so arrow-key navigation can
+	// scroll the selected row into view in both palette views.
+	const mainRowRefs = useRef(new Map<number, HTMLElement | null>());
+	const browseRowRefs = useRef(new Map<number, HTMLElement | null>());
 
 	const beginClose = () => setIsOpen(false);
 
@@ -173,12 +176,19 @@ export function Palette() {
 		return (meetings ?? []).slice(0, RECENT_LIMIT);
 	}, [meetings]);
 
+	const hasMeetings = (meetings ?? []).length > 0;
 	const filteredActions = useMemo(() => {
-		return ACTIONS.map((a) => ({ a, score: rank(query, a) }))
+		return ACTIONS.filter(
+			// Hide meeting-dependent actions when there's nothing to act on.
+			(a) =>
+				hasMeetings ||
+				(a.id !== "open_last_meeting" && a.id !== "browse_meetings"),
+		)
+			.map((a) => ({ a, score: rank(query, a) }))
 			.filter((x) => x.score > 0)
 			.sort((x, y) => y.score - x.score)
 			.map((x) => x.a);
-	}, [query]);
+	}, [query, hasMeetings]);
 
 	// Main view items: actions first, then recent meetings (when no query).
 	const mainItems = useMemo<
@@ -216,6 +226,21 @@ export function Palette() {
 		setBrowseSelectedIdx(0);
 		setConfirmingDeleteId(null);
 	}, [browseQuery]);
+
+	// AIZ-12 — keep the selected row in view when arrow-key navigation
+	// pushes it past the scroll viewport. `block: nearest` avoids jumpy
+	// re-centering when the row is already visible.
+	useEffect(() => {
+		if (view !== "main") return;
+		const node = mainRowRefs.current.get(selectedIdx);
+		node?.scrollIntoView({ block: "nearest" });
+	}, [selectedIdx, view]);
+
+	useEffect(() => {
+		if (view !== "browse") return;
+		const node = browseRowRefs.current.get(browseSelectedIdx);
+		node?.scrollIntoView({ block: "nearest" });
+	}, [browseSelectedIdx, view]);
 
 	useEffect(() => {
 		if (view === "main") {
@@ -344,8 +369,7 @@ export function Palette() {
 					const isAudioVideo = audioVideoExts.some((ext) =>
 						lower.endsWith(`.${ext}`),
 					);
-					const filename =
-						selected.split(/[/\\]/).pop() ?? selected;
+					const filename = selected.split(/[/\\]/).pop() ?? selected;
 					if (isAudioVideo) setImportingFile(filename);
 					const command = isAudioVideo
 						? "import_audio_meeting_from_path"
@@ -408,6 +432,17 @@ export function Palette() {
 			setSelectedIdx((i) => Math.max(i - 1, 0));
 			return;
 		}
+		// Backspace deletes the selected recent meeting (with confirm). When
+		// the input has text and the selected item is an action, fall through
+		// so backspace edits the search query as expected.
+		if (e.key === "Backspace") {
+			const item = mainItems[selectedIdx];
+			if (item?.kind === "recent" && query.length === 0) {
+				e.preventDefault();
+				handleDeleteClick(item.meeting.id);
+				return;
+			}
+		}
 		if (e.key === "Enter") {
 			e.preventDefault();
 			const item = mainItems[selectedIdx];
@@ -440,6 +475,16 @@ export function Palette() {
 			e.preventDefault();
 			setBrowseSelectedIdx((i) => Math.max(i - 1, 0));
 			return;
+		}
+		// Backspace deletes the selected meeting. When the search input has
+		// text we let the keypress fall through so the query can be edited.
+		if (e.key === "Backspace" && browseQuery.length === 0) {
+			const m = filteredMeetings[browseSelectedIdx];
+			if (m) {
+				e.preventDefault();
+				handleDeleteClick(m.id);
+				return;
+			}
 		}
 		if (e.key === "Enter") {
 			e.preventDefault();
@@ -517,6 +562,10 @@ export function Palette() {
 												out.push(
 													<button
 														key={`action-${item.action.id}`}
+														ref={(node) => {
+															if (node) mainRowRefs.current.set(i, node);
+															else mainRowRefs.current.delete(i);
+														}}
 														type="button"
 														onMouseEnter={() => setSelectedIdx(i)}
 														onClick={() => runAction(item.action.id)}
@@ -536,16 +585,32 @@ export function Palette() {
 												);
 											} else {
 												const m = item.meeting;
+												const isConfirming = confirmingDeleteId === m.id;
 												out.push(
-													<button
+													// biome-ignore lint/a11y/useKeyWithClickEvents: keyboard nav handled at the search-input level (Enter opens, ArrowUp/Down moves, Backspace deletes)
+													// biome-ignore lint/a11y/noStaticElementInteractions: row contains a delete <button>; nesting <button> would be invalid HTML
+													<div
 														key={`recent-${m.id}`}
-														type="button"
+														ref={(node) => {
+															if (node) mainRowRefs.current.set(i, node);
+															else mainRowRefs.current.delete(i);
+														}}
 														onMouseEnter={() => setSelectedIdx(i)}
-														onClick={() => openMeeting(m.id)}
-														className={`flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left transition-colors ${
-															i === selectedIdx
-																? "bg-white/15"
-																: "hover:bg-white/10"
+														onClick={(e) => {
+															if (
+																e.target instanceof HTMLElement &&
+																e.target.closest("[data-row-delete]")
+															) {
+																return;
+															}
+															openMeeting(m.id);
+														}}
+														className={`group flex w-full cursor-pointer items-center justify-between gap-3 rounded-md px-3 py-2 transition-colors ${
+															isConfirming
+																? "bg-red-500/15 ring-1 ring-red-500/40"
+																: i === selectedIdx
+																	? "bg-white/15"
+																	: "hover:bg-white/10"
 														}`}
 													>
 														<div className="flex min-w-0 flex-col">
@@ -558,10 +623,42 @@ export function Palette() {
 																{formatDuration(m.transcriptDurationMs)}
 															</span>
 														</div>
-														<span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-white/70">
-															{m.mode}
-														</span>
-													</button>,
+														<div className="flex items-center gap-2">
+															<span className="rounded bg-white/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-white/70">
+																{m.mode}
+															</span>
+															{isConfirming ? (
+																<button
+																	type="button"
+																	data-row-delete
+																	onClick={(e) => {
+																		e.stopPropagation();
+																		handleDeleteClick(m.id);
+																	}}
+																	className="rounded border border-red-500/40 bg-red-500/20 px-2 py-1 text-[11px] font-medium text-red-200 hover:bg-red-500/30"
+																>
+																	Click again to delete
+																</button>
+															) : (
+																<button
+																	type="button"
+																	data-row-delete
+																	aria-label={`Delete meeting ${meetingDisplayName(m)}`}
+																	onClick={(e) => {
+																		e.stopPropagation();
+																		handleDeleteClick(m.id);
+																	}}
+																	className={`rounded p-1.5 text-white/40 transition-opacity hover:bg-white/10 hover:text-red-300 focus:opacity-100 group-hover:opacity-100 ${
+																		i === selectedIdx
+																			? "opacity-100"
+																			: "opacity-0"
+																	}`}
+																>
+																	<Trash2 className="h-4 w-4" />
+																</button>
+															)}
+														</div>
+													</div>,
 												);
 											}
 										});
@@ -613,10 +710,14 @@ export function Palette() {
 										const isSelected = i === browseSelectedIdx;
 										const isConfirming = confirmingDeleteId === m.id;
 										return (
-											// biome-ignore lint/a11y/useKeyWithClickEvents: row keyboard nav handled at search-input level (Enter opens, ArrowUp/Down moves selection)
+											// biome-ignore lint/a11y/useKeyWithClickEvents: row keyboard nav handled at search-input level (Enter opens, ArrowUp/Down moves selection, Backspace deletes)
 											// biome-ignore lint/a11y/noStaticElementInteractions: row contains a delete button; using a <button> would create nested-button HTML
 											<div
 												key={m.id}
+												ref={(node) => {
+													if (node) browseRowRefs.current.set(i, node);
+													else browseRowRefs.current.delete(i);
+												}}
 												onMouseEnter={() => setBrowseSelectedIdx(i)}
 												onClick={(e) => {
 													// Avoid hijacking when the click came from the trash button.
@@ -672,7 +773,9 @@ export function Palette() {
 															e.stopPropagation();
 															handleDeleteClick(m.id);
 														}}
-														className="rounded p-1.5 text-white/40 opacity-0 transition-opacity hover:bg-white/10 hover:text-red-300 group-hover:opacity-100 focus:opacity-100"
+														className={`rounded p-1.5 text-white/40 transition-opacity hover:bg-white/10 hover:text-red-300 focus:opacity-100 group-hover:opacity-100 ${
+															isSelected ? "opacity-100" : "opacity-0"
+														}`}
 													>
 														<Trash2 className="h-4 w-4" />
 													</button>

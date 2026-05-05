@@ -600,6 +600,42 @@ fn save_meeting(snapshot: serde_json::Value) -> Result<String, String> {
     meetings::save_snapshot(&notes_dir(), snapshot)
 }
 
+/// AIZ-12 — debug snapshot of the live meeting state. Written by the
+/// meeting window on each settled state change so external tools (CLI
+/// `meeting inspect`, ad-hoc inspection) can see what gemma has
+/// produced and where the d3-force simulation has parked the nodes
+/// without needing a screenshot. The shape is intentionally loose —
+/// the React side controls the schema.
+///
+/// The file is rewritten atomically (write-tmp + rename) so concurrent
+/// readers never see a partial JSON document.
+#[tauri::command]
+fn write_meeting_debug(snapshot: serde_json::Value) -> Result<(), String> {
+    let dir = notes_dir().join("debug");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("create debug dir: {e}"))?;
+    let final_path = dir.join("current-meeting.json");
+    let tmp_path = dir.join("current-meeting.json.tmp");
+    let body = serde_json::to_vec_pretty(&snapshot)
+        .map_err(|e| format!("serialize debug snapshot: {e}"))?;
+    std::fs::write(&tmp_path, &body)
+        .map_err(|e| format!("write debug tmp: {e}"))?;
+    std::fs::rename(&tmp_path, &final_path)
+        .map_err(|e| format!("rename debug tmp: {e}"))?;
+    Ok(())
+}
+
+/// AIZ-12 — clear the live debug snapshot. Called when the meeting
+/// window closes so external tools don't read a stale graph.
+#[tauri::command]
+fn clear_meeting_debug() -> Result<(), String> {
+    let path = notes_dir().join("debug").join("current-meeting.json");
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("remove debug snapshot: {e}")),
+    }
+}
+
 #[tauri::command]
 fn list_meetings() -> Result<Vec<meetings::MeetingMeta>, String> {
     meetings::list_snapshots(&notes_dir())
@@ -1453,6 +1489,8 @@ pub fn run() {
             stop_live_capture,
             get_audio_phase,
             save_meeting,
+            write_meeting_debug,
+            clear_meeting_debug,
             list_meetings,
             load_meeting,
             delete_meeting,
