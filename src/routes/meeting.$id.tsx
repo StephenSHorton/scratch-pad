@@ -456,16 +456,13 @@ function MeetingPrototype() {
 		};
 	}, [id]);
 
-	// AIZ-47 — when the meeting window unmounts (close, navigate away)
-	// during a streaming audio import, ask the backend to abort whisper
-	// so we don't burn CPU on a transcription whose output goes nowhere.
-	// Idempotent on the Rust side — safe to call when the import has
-	// already finished or never started.
-	useEffect(() => {
-		return () => {
-			invoke("cancel_audio_import", { id }).catch(() => {});
-		};
-	}, [id]);
+	// AIZ-47 — cancel-on-close was originally wired here so closing the
+	// meeting window mid-import would stop whisper. Pulling it for now:
+	// the React-unmount path runs twice under Strict Mode in dev (cancels
+	// before the import starts), and the Tauri `onCloseRequested` path
+	// appeared to interfere with the close itself. The backend
+	// `cancel_audio_import` command stays — re-wire from a more reliable
+	// signal in a follow-up.
 
 	const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -539,6 +536,7 @@ function MeetingPrototype() {
 										name={session.name}
 										nameLockedByUser={session.nameLockedByUser}
 										importStreamSegmentCount={session.importStreamSegmentCount}
+										importStreamProgress={session.importStreamProgress}
 										importStreamFinished={session.importStreamFinished}
 										onSetName={session.setMeetingName}
 										onStartDemo={session.startDemo}

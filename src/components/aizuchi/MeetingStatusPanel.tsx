@@ -15,6 +15,7 @@ export function MeetingStatusPanel({
 	name,
 	nameLockedByUser,
 	importStreamSegmentCount,
+	importStreamProgress,
 	importStreamFinished,
 	onSetName,
 	onStartDemo,
@@ -36,6 +37,7 @@ export function MeetingStatusPanel({
 	name: string | null;
 	nameLockedByUser: boolean;
 	importStreamSegmentCount: number;
+	importStreamProgress: number;
 	importStreamFinished: boolean;
 	onSetName: (name: string) => void;
 	onStartDemo: () => void;
@@ -128,10 +130,21 @@ export function MeetingStatusPanel({
 				</div>
 			)}
 			{mode === "import" && !importStreamFinished && !isArchived && (
-				<div className="flex items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-300">
-					<span className="size-1.5 animate-pulse rounded-full bg-amber-500" />
-					Whisper transcribing… ({importStreamSegmentCount} segment
-					{importStreamSegmentCount === 1 ? "" : "s"})
+				<div className="flex flex-col gap-1 text-[11px] text-amber-700 dark:text-amber-300">
+					<div className="flex items-center gap-1.5">
+						<span className="size-1.5 animate-pulse rounded-full bg-amber-500" />
+						<span>
+							Whisper transcribing… {importStreamProgress}% (
+							{importStreamSegmentCount} segment
+							{importStreamSegmentCount === 1 ? "" : "s"})
+						</span>
+					</div>
+					<div className="h-1 w-full overflow-hidden rounded-full bg-amber-500/15">
+						<div
+							className="h-full bg-amber-500 transition-[width] duration-300 ease-out"
+							style={{ width: `${importStreamProgress}%` }}
+						/>
+					</div>
 				</div>
 			)}
 			<div className="text-muted-foreground">

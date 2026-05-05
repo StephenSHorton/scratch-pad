@@ -311,26 +311,34 @@ pub fn transcribe_file(
 /// Audio import forces Substance extraction mode (see `audio_import.rs`),
 /// so the speaker label is unused by the downstream prompt — losing it
 /// here costs nothing today and keeps the streaming hot path free of
-/// `unsafe` FFI handling.
+/// type-confused FFI handling.
 ///
-/// `abort` is polled by ggml between graph evaluations; returning `true`
-/// stops inference and `state.full(...)` returns
-/// `WhisperError::GenericError(-1)`, which we surface as a sentinel
-/// `Err("aborted".into())` so callers can distinguish a clean cancel
-/// from a real failure.
+/// The abort path uses the *unsafe* whisper-rs API: `set_abort_callback`
+/// + `set_abort_callback_user_data` driven by an `AtomicBool` we point
+/// at directly. The safe wrapper (`set_abort_callback_safe`) in
+/// whisper-rs 0.16 has a type-confusion bug — its trampoline is
+/// monomorphized over the caller's closure type while the user_data is
+/// stored as a `*mut Box<dyn FnMut() -> bool>`, so the callback ends up
+/// reading garbage memory and returning spurious aborts (whisper then
+/// reports -6 "failed to encode" because ggml was interrupted mid-
+/// encoder). Reading an `AtomicBool` directly through a thin pointer
+/// sidesteps the issue entirely.
 ///
 /// Returns the decoded audio duration in milliseconds so the caller can
 /// estimate how many segments are still to come (whisper.cpp gives no
-/// total-segments hint up front).
-pub fn transcribe_audio_file_streaming<F, A>(
+/// total-segments hint up front). Detect cancellation via the
+/// `AtomicBool` you passed in — the error code on abort varies across
+/// whisper.cpp versions.
+pub fn transcribe_audio_file_streaming<F, P>(
     model_path: &Path,
     audio_path: &Path,
     on_segment: F,
-    abort: A,
+    on_progress: P,
+    abort: Arc<AtomicBool>,
 ) -> Result<i64, String>
 where
     F: FnMut(TranscriptSegment) + Send + 'static,
-    A: FnMut() -> bool + Send + 'static,
+    P: FnMut(i32) + Send + 'static,
 {
     let samples = decode_audio_to_mono_16k(audio_path)?;
     if samples.is_empty() {
@@ -377,23 +385,45 @@ where
         });
     });
 
-    let mut abort_fn = abort;
-    params.set_abort_callback_safe(move || abort_fn());
+    // whisper.cpp's progress callback fires repeatedly during inference
+    // with a 0..100 percent. Used by the frontend to render a real
+    // progress bar in the status pill.
+    let mut on_prog = on_progress;
+    params.set_progress_callback_safe(move |percent: i32| on_prog(percent));
 
-    match state.full(params, &samples) {
-        Ok(_) => Ok(duration_ms),
-        Err(e) => {
-            // Distinguish abort (caller cancelled) from real failure.
-            // ggml's abort path surfaces as a generic -1 from whisper_full,
-            // and the error string contains the C return code.
-            let msg = format!("{e}");
-            if msg.contains("-1") {
-                Err("aborted".into())
-            } else {
-                Err(format!("Whisper inference failed: {e}"))
-            }
-        }
+    // SAFETY: `abort_trampoline` reads a single `AtomicBool` through the
+    // pointer we hand to whisper. We hold `abort` as an `Arc` for the
+    // entire `state.full(...)` call, so the AtomicBool is alive until
+    // every callback invocation returns. After `state.full` returns,
+    // whisper.cpp guarantees no further calls into the callback.
+    let abort_ptr = Arc::as_ptr(&abort) as *mut std::ffi::c_void;
+    unsafe {
+        params.set_abort_callback(Some(abort_trampoline));
+        params.set_abort_callback_user_data(abort_ptr);
     }
+
+    let result = state
+        .full(params, &samples)
+        .map_err(|e| format!("Whisper inference failed: {e}"));
+    // Keep `abort` alive at least until state.full returns. Without an
+    // explicit drop the optimizer is free to drop it earlier as long as
+    // it's "no longer used" by Rust-visible code, but the C library is
+    // still touching it through `abort_ptr`.
+    drop(abort);
+    result?;
+    Ok(duration_ms)
+}
+
+/// Trampoline for whisper.cpp's abort callback. Reads a single
+/// `AtomicBool` through `user_data`. See `transcribe_audio_file_streaming`
+/// for why we wire this up by hand instead of using whisper-rs's safe
+/// wrapper.
+unsafe extern "C" fn abort_trampoline(user_data: *mut std::ffi::c_void) -> bool {
+    if user_data.is_null() {
+        return false;
+    }
+    let flag = unsafe { &*(user_data as *const AtomicBool) };
+    flag.load(Ordering::Relaxed)
 }
 
 /// Whisper invocation shared between the WAV and decoded-audio paths.

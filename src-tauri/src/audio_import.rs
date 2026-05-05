@@ -66,6 +66,16 @@ pub struct AudioImportDonePayload {
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct AudioImportProgressPayload {
+    pub import_id: String,
+    /// 0..=100. Driven by whisper.cpp's progress callback, which fires
+    /// repeatedly during inference; the frontend coalesces these into
+    /// the status-pill progress bar.
+    pub percent: i32,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct AudioImportErrorPayload {
     pub import_id: String,
     pub message: String,
@@ -200,11 +210,43 @@ fn run_streaming_worker(
         }
     };
 
-    let abort_check = abort.clone();
-    let on_abort = move || abort_check.load(Ordering::Relaxed);
+    // Whisper.cpp's progress callback fires *very* frequently (10-20+ Hz
+    // during inference). The frontend cares about visible deltas, so we
+    // only emit a Tauri event when the integer percent advances. This
+    // also keeps the IPC channel from drowning in noise when the model
+    // is hot.
+    let prog_app = app.clone();
+    let prog_id = import_id.clone();
+    let last_percent = Arc::new(Mutex::new(-1i32));
+    let on_progress = move |percent: i32| {
+        if let Ok(mut last) = last_percent.lock() {
+            if percent <= *last {
+                return;
+            }
+            *last = percent;
+        } else {
+            return;
+        }
+        if let Err(e) = prog_app.emit(
+            "audio-import-progress",
+            AudioImportProgressPayload {
+                import_id: prog_id.clone(),
+                percent,
+            },
+        ) {
+            crate::log(&format!(
+                "[audio-import] emit progress failed for {prog_id}: {e}"
+            ));
+        }
+    };
 
-    let result =
-        audio::transcribe_audio_file_streaming(&model_path, &audio_path, on_segment, on_abort);
+    let result = audio::transcribe_audio_file_streaming(
+        &model_path,
+        &audio_path,
+        on_segment,
+        on_progress,
+        abort.clone(),
+    );
 
     // Drop the abort registration regardless of how we got here so a
     // late `cancel_audio_import` doesn't try to flip a stale flag.
@@ -215,6 +257,7 @@ fn run_streaming_worker(
     }
 
     let total = segment_count.lock().map(|n| *n).unwrap_or(0);
+    let aborted = abort.load(Ordering::Relaxed);
     match result {
         Ok(_duration_ms) => {
             crate::log(&format!(
@@ -230,13 +273,15 @@ fn run_streaming_worker(
                 crate::log(&format!("[audio-import] emit done failed: {e}"));
             }
         }
-        Err(msg) if msg == "aborted" => {
+        Err(_) if aborted => {
+            // The meeting window flipped the abort flag (closed mid-import).
+            // No `done` event and no `error` event — both would just
+            // re-render against a closed window. ggml's exact error code
+            // on abort varies (-1, -6, etc.), so we read the abort flag
+            // here instead of trying to parse the error string.
             crate::log(&format!(
                 "[audio-import] aborted: {import_id} ({total} segment(s) emitted)"
             ));
-            // No `done` event — the meeting window already moved on
-            // (it's the one who flipped the abort). An error event
-            // would re-render an error pill against the closed window.
         }
         Err(message) => {
             crate::log(&format!("[audio-import] error: {import_id}: {message}"));

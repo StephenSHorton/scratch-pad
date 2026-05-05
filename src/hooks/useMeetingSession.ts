@@ -48,12 +48,19 @@ const TIME_THRESHOLD_MS = 25_000;
 const LIVE_SIZE_THRESHOLD_WORDS = 18;
 const LIVE_TIME_THRESHOLD_MS = 7_000;
 const LIVE_CHUNK_COUNT_THRESHOLD = 3;
-// Streaming audio import (AIZ-47) reuses the live thresholds — segments
-// arrive as whisper produces them, so the user-perceived latency to
-// "graph starts populating" matches the live-capture feel.
-const IMPORT_STREAM_SIZE_THRESHOLD_WORDS = LIVE_SIZE_THRESHOLD_WORDS;
-const IMPORT_STREAM_TIME_THRESHOLD_MS = LIVE_TIME_THRESHOLD_MS;
-const IMPORT_STREAM_CHUNK_COUNT_THRESHOLD = LIVE_CHUNK_COUNT_THRESHOLD;
+// Streaming audio import (AIZ-47) — match the non-streaming import
+// path's tuning so gemma gets the same paragraph-sized batches whether
+// the transcript came from a static file or whisper's live segment
+// stream. Whisper segments often span 5–15 seconds of audio each, so
+// a tighter time bound (e.g. 15s) fires on the very first chunk and
+// floods gemma with tiny batches. 25s of audio gives ~60 words at
+// normal speaking pace, which is exactly when the size bound fires —
+// the time bound becomes the safety net for sparse / silent stretches.
+// `chunkCountThreshold` is a high safety cap for unusually fragmented
+// speech; in practice size fires first.
+const IMPORT_STREAM_SIZE_THRESHOLD_WORDS = SIZE_THRESHOLD_WORDS;
+const IMPORT_STREAM_TIME_THRESHOLD_MS = TIME_THRESHOLD_MS;
+const IMPORT_STREAM_CHUNK_COUNT_THRESHOLD = 15;
 const HIGHLIGHT_MS = 1500;
 export const SPEED_MULTIPLIER = 4;
 /** Sliding-window of transcript fed to the model for coreference / context. */
@@ -135,6 +142,9 @@ export interface MeetingSession {
 	/** AIZ-47 — number of whisper segments received so far on the active
 	 * streaming-import session. 0 outside of streaming imports. */
 	importStreamSegmentCount: number;
+	/** AIZ-47 — whisper inference progress 0..=100 driven by whisper.cpp's
+	 * progress callback. 0 outside of streaming imports. */
+	importStreamProgress: number;
 	/** True once whisper signals `audio-import-done` (or aborts/errors)
 	 * for the active streaming import. Lets the status pill clear. */
 	importStreamFinished: boolean;
@@ -172,6 +182,7 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 	// done; the count alone isn't enough because the producer might emit a
 	// final batch and then go quiet on cancel.
 	const [importStreamSegmentCount, setImportStreamSegmentCount] = useState(0);
+	const [importStreamProgress, setImportStreamProgress] = useState(0);
 	const [importStreamFinished, setImportStreamFinished] = useState(false);
 
 	const consumedChunksRef = useRef(0);
@@ -287,6 +298,7 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		setArchivedAt(null);
 		setStatus("listening");
 		setImportStreamSegmentCount(0);
+		setImportStreamProgress(0);
 		setImportStreamFinished(false);
 		// AIZ-16 — clear naming state for a fresh session. Resume reuses
 		// existing values and goes through resumeLive instead.
@@ -686,8 +698,12 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 				pushChunk(chunk);
 				setImportStreamSegmentCount((n) => n + 1);
 			},
+			onProgress: (percent) => {
+				setImportStreamProgress(percent);
+			},
 			onDone: (segmentCount) => {
 				dlog(`audio-import-done: ${segmentCount} segment(s)`);
+				setImportStreamProgress(100);
 				setImportStreamFinished(true);
 			},
 			onError: (message) => {
@@ -939,6 +955,7 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		startImport,
 		startImportStream,
 		importStreamSegmentCount,
+		importStreamProgress,
 		importStreamFinished,
 		pauseDemo,
 		resumeDemo,

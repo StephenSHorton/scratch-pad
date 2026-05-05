@@ -188,6 +188,9 @@ export interface AudioImportStreamOptions {
 	signal: FeederSignal;
 	/** Fires once per chunk as it arrives. */
 	onChunk?: (chunk: TranscriptChunk) => void;
+	/** Fires when the backend reports `audio-import-progress` (each
+	 * integer-percent advance during whisper inference). */
+	onProgress?: (percent: number) => void;
 	/** Fires once when the backend reports `audio-import-done`. */
 	onDone?: (segmentCount: number) => void;
 	/** Fires once when the backend reports `audio-import-error`. */
@@ -227,6 +230,14 @@ export async function* consumeAudioImportStream(
 		wakeWaiter();
 	});
 
+	const unlistenProgress: UnlistenFn = await listen<{
+		importId: string;
+		percent: number;
+	}>("audio-import-progress", (event) => {
+		if (event.payload.importId !== opts.importId) return;
+		opts.onProgress?.(event.payload.percent);
+	});
+
 	const unlistenDone: UnlistenFn = await listen<{
 		importId: string;
 		segmentCount: number;
@@ -261,16 +272,33 @@ export async function* consumeAudioImportStream(
 			}
 			if (opts.signal.cancelled) return;
 
-			// Drain anything we've buffered before honoring `streamFinished`,
-			// so the trailing partial batch still flushes.
-			const chunk = queue.shift();
-			if (!chunk) {
+			// Once whisper signals done, dump the entire remaining queue as
+			// one final batch. The streaming case earns its keep while
+			// whisper is still working — that's when the user wants the
+			// graph to populate early. Past that point, splitting the
+			// trailer into many small batches just adds gemma roundtrips
+			// (and on a 5+ minute recording, each extra roundtrip is
+			// visible to the user as another "thinking…" cycle). Gemma
+			// handles one large drain batch fine because the audio import
+			// path forces Substance mode, which already prompts the model
+			// for paragraph-level reasoning.
+			if (streamFinished) {
+				while (queue.length > 0) {
+					const chunk = queue.shift();
+					if (!chunk) break;
+					if (buf.length === 0) bufStartMs = chunk.startMs;
+					buf.push(chunk);
+					words += wordCount(chunk.text);
+				}
 				if (streamError) throw new Error(streamError);
 				if (buf.length > 0) {
 					yield { chunks: buf, wordCount: words };
 				}
 				return;
 			}
+
+			const chunk = queue.shift();
+			if (!chunk) continue;
 
 			if (buf.length === 0) bufStartMs = chunk.startMs;
 			buf.push(chunk);
@@ -290,6 +318,7 @@ export async function* consumeAudioImportStream(
 		}
 	} finally {
 		unlistenSegment();
+		unlistenProgress();
 		unlistenDone();
 		unlistenError();
 	}
