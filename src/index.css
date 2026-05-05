@@ -474,3 +474,47 @@
 ::-webkit-scrollbar-corner {
 	background: transparent;
 }
+
+.aiz-meeting-group.aiz-resizing,
+.aiz-meeting-group.aiz-resizing * {
+	cursor: col-resize !important;
+	user-select: none !important;
+	-webkit-user-select: none !important;
+}
+
+.aiz-meeting-group.aiz-resizing [data-panel],
+.aiz-meeting-group.aiz-resizing [data-panel] * {
+	pointer-events: none !important;
+}
+
+.aiz-meeting-group.aiz-snapping [data-panel] {
+	transition: all 240ms cubic-bezier(0.32, 0.72, 0, 1) !important;
+}
+
+.aiz-meeting-group [data-separator] {
+	outline: none !important;
+}
+.aiz-meeting-group [data-separator]:focus,
+.aiz-meeting-group [data-separator]:focus-visible {
+	outline: none !important;
+	box-shadow: none !important;
+}
+
+.aiz-meeting-group.aiz-resizing .aiz-canvas-shield {
+	display: block !important;
+	pointer-events: auto !important;
+}
+
+.aiz-meeting-group.aiz-resizing .react-flow__nodes,
+.aiz-meeting-group.aiz-resizing .react-flow__edges,
+.aiz-meeting-group.aiz-resizing .react-flow__edgelabel-renderer {
+	visibility: hidden !important;
+}
+
+#aiz-outline-panel {
+	transition: opacity 120ms ease-out;
+}
+
+.aiz-meeting-group.aiz-will-close #aiz-outline-panel {
+	opacity: 0.4;
+}
