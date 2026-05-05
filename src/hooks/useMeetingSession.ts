@@ -378,6 +378,7 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		setNameLockedByUser(snap.nameLockedByUser ?? false);
 	};
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: hydrateFromSnapshot only writes to refs and stable setState setters; including it would re-run the snapshot load on every render
 	useEffect(() => {
 		// "test" is reserved for the live/demo entry — never try to load
 		// it as an archived snapshot.
@@ -394,7 +395,6 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		return () => {
 			cancelled = true;
 		};
-		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [meetingId]);
 
 	// AIZ-16 — propose a meeting name when there's enough signal and we're

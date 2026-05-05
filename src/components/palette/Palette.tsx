@@ -206,6 +206,7 @@ export function Palette() {
 		return list.filter((m) => meetingFilterHaystack(m).includes(q));
 	}, [meetings, browseQuery]);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: state setters are stable; we only want this to run when the search query changes
 	useEffect(() => {
 		setSelectedIdx(0);
 	}, [query]);
@@ -233,6 +234,7 @@ export function Palette() {
 		};
 	}, []);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: beginClose only calls the stable setIsOpen setter; re-subscribing on every render would needlessly tear down the focus listener
 	useEffect(() => {
 		const win = getCurrentWindow();
 		const unlisten = win.onFocusChanged(({ payload: focused }) => {
