@@ -28,37 +28,19 @@ import type {
 	Edge as AzEdge,
 	Node as AzNode,
 	Graph,
-	NodeType,
 	TranscriptChunk,
 } from "@/lib/aizuchi/schemas";
 
-const COLUMN_X: Record<NodeType, number> = {
-	person: 0,
-	topic: 380,
-	work_item: 760,
-	action_item: 1140,
-	decision: 1520,
-	blocker: 1900,
-	question: 2280,
-	context: 2660,
-	// AIZ-12 — richer vocabulary, grouped by affinity
-	risk: 3040,
-	assumption: 3420,
-	constraint: 3800,
-	hypothesis: 4180,
-	metric: 4560,
-	artifact: 4940,
-	event: 5320,
-	sentiment: 5700,
-};
-
-const ROW_HEIGHT = 160;
-// Approximate width of a rendered AizuchiNode card (matches `w-sm` in
-// ai-elements/node.tsx). Used by the position-aware handle picker so an
-// edge from column N to column N+1 chooses left/right handles, not
-// a diagonal across the gap.
+// Approximate dimensions of a rendered AizuchiNode card (matches `w-sm` in
+// the shell). Used by the position-aware handle picker so the edge endpoints
+// land on the correct side of the card.
 const NODE_WIDTH = 384;
-const NODE_HEIGHT = 120;
+const NODE_HEIGHT = 140;
+// AIZ-12 — fallback auto-layout when the AI didn't supply a position. We
+// place unpositioned nodes in a grid below the AI-positioned bounding box.
+const FALLBACK_GRID_COLS = 4;
+const FALLBACK_X_STEP = NODE_WIDTH + 60;
+const FALLBACK_Y_STEP = NODE_HEIGHT + 60;
 
 type HandleSide = "left" | "right" | "top" | "bottom";
 
@@ -120,19 +102,61 @@ function computeNeighborhood(
 	return { nodeIds, edgeIds };
 }
 
+/**
+ * AIZ-12 — resolve the on-canvas position of every node. Trust the AI's
+ * `node.position` whenever set; for any node the AI hasn't placed yet,
+ * drop it into a grid below the bounding box of the AI-placed nodes so
+ * it's still discoverable. We sort the unplaced nodes by id so the
+ * fallback grid is deterministic across passes (otherwise `add_nodes`
+ * order would shuffle the grid every render).
+ */
+function resolvePositions(graph: Graph): Map<string, { x: number; y: number }> {
+	const positions = new Map<string, { x: number; y: number }>();
+	let maxX = -Infinity;
+	let maxY = -Infinity;
+	let minX = Infinity;
+	const placedNodes: typeof graph.nodes = [];
+	const unplaced: typeof graph.nodes = [];
+	for (const n of graph.nodes) {
+		if (n.position) {
+			positions.set(n.id, n.position);
+			placedNodes.push(n);
+			if (n.position.x > maxX) maxX = n.position.x;
+			if (n.position.x < minX) minX = n.position.x;
+			if (n.position.y > maxY) maxY = n.position.y;
+		} else {
+			unplaced.push(n);
+		}
+	}
+	if (unplaced.length === 0) return positions;
+
+	// Anchor the fallback grid below the placed bbox; if nothing is
+	// placed yet, anchor at (0, 0).
+	const baseX = placedNodes.length > 0 ? minX : 0;
+	const baseY = placedNodes.length > 0 ? maxY + FALLBACK_Y_STEP : 0;
+
+	// Sort by id for stability across diffs.
+	const sorted = [...unplaced].sort((a, b) => a.id.localeCompare(b.id));
+	sorted.forEach((n, idx) => {
+		const col = idx % FALLBACK_GRID_COLS;
+		const row = Math.floor(idx / FALLBACK_GRID_COLS);
+		positions.set(n.id, {
+			x: baseX + col * FALLBACK_X_STEP,
+			y: baseY + row * FALLBACK_Y_STEP,
+		});
+	});
+	return positions;
+}
+
 function layoutGraph(
 	graph: Graph,
 	highlightIds: ReadonlySet<string>,
 	selectedId: string | null,
 ): { nodes: RFNode[]; edges: RFEdge[] } {
 	const neighborhood = computeNeighborhood(graph, selectedId);
-	const counters: Partial<Record<NodeType, number>> = {};
-	const positions = new Map<string, { x: number; y: number }>();
+	const positions = resolvePositions(graph);
 	const nodes: RFNode[] = graph.nodes.map((n) => {
-		const idx = counters[n.type] ?? 0;
-		counters[n.type] = idx + 1;
-		const position = { x: COLUMN_X[n.type], y: idx * ROW_HEIGHT };
-		positions.set(n.id, position);
+		const position = positions.get(n.id) ?? { x: 0, y: 0 };
 		const inNeighborhood = neighborhood?.nodeIds.has(n.id) ?? false;
 		const isFocused = neighborhood ? n.id === selectedId : false;
 		const dimmed = !!neighborhood && !inNeighborhood;
