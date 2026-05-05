@@ -177,12 +177,19 @@ export function Palette() {
 		return (meetings ?? []).slice(0, RECENT_LIMIT);
 	}, [meetings]);
 
+	const hasMeetings = (meetings ?? []).length > 0;
 	const filteredActions = useMemo(() => {
-		return ACTIONS.map((a) => ({ a, score: rank(query, a) }))
+		return ACTIONS.filter(
+			// Hide meeting-dependent actions when there's nothing to act on.
+			(a) =>
+				hasMeetings ||
+				(a.id !== "open_last_meeting" && a.id !== "browse_meetings"),
+		)
+			.map((a) => ({ a, score: rank(query, a) }))
 			.filter((x) => x.score > 0)
 			.sort((x, y) => y.score - x.score)
 			.map((x) => x.a);
-	}, [query]);
+	}, [query, hasMeetings]);
 
 	// Main view items: actions first, then recent meetings (when no query).
 	const mainItems = useMemo<
