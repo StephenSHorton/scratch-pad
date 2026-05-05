@@ -637,7 +637,7 @@ cli
 					case "import": {
 						if (!id) {
 							process.stderr.write(
-								"aizuchi: meeting import requires a path to a transcript, audio, or video file (.txt / .md / .json / .wav / .mp3 / .m4a / .flac / .mp4 / .mov).\n",
+								"aizuchi: meeting import requires a path to a transcript, audio, or video file (.txt / .md / .json / .wav / .mp3 / .m4a / .flac / .mp4 / .mov / .webm / .mkv).\n",
 							);
 							process.exit(1);
 						}
@@ -650,6 +650,8 @@ cli
 							".flac",
 							".mp4",
 							".mov",
+							".webm",
+							".mkv",
 						]);
 						if (mediaExts.has(ext)) {
 							// AIZ-31 — audio path: server reads the file and runs
