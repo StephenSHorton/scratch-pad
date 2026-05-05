@@ -161,21 +161,38 @@ const edgeTypes = {
 } as const;
 
 /**
- * AIZ-12 — when the AI touches new nodes (the highlightIds set turns
- * over), smoothly pan/zoom the viewport to frame those nodes so the
- * user sees the AI working live. We debounce slightly so a flurry of
- * adds inside a single pass produces one camera move, not several.
+ * AIZ-12 — keep the camera in step with the d3-force simulation.
+ *
+ * Two flows, both triggered by `settledAt` updates (the simulation's
+ * `end` event timestamp from useForceLayout):
+ *
+ * 1. **First paint** — the meeting opens with all nodes seeded near
+ *    (0,0). The simulation needs ~1.5–2s to spread them out. Frame the
+ *    whole graph at the FIRST settle, never before. Otherwise the
+ *    camera locks onto an empty origin region and stays there while
+ *    the nodes flow outward.
+ *
+ * 2. **AI follow** — when gemma touches new nodes, we record them as
+ *    "pending fit" and wait for the next settle. Same reason: the
+ *    sim restarts (alpha bumps to 0.6) when the graph changes, and we
+ *    don't want to chase mid-flight positions.
  */
 function CameraFollower({
 	highlightIds,
 	graphNodeCount,
+	settledAt,
 }: {
 	highlightIds: ReadonlySet<string>;
 	graphNodeCount: number;
+	settledAt: number;
 }) {
 	const { fitView } = useReactFlow();
 	const previousIdsRef = useRef<ReadonlySet<string>>(new Set());
+	const pendingFitRef = useRef<string[] | null>(null);
+	const firstFitDoneRef = useRef(false);
 
+	// Track new highlightIds → queue them for the next settle. We don't
+	// fire fitView from here; the settle effect below does it.
 	useEffect(() => {
 		const previous = previousIdsRef.current;
 		const newlyTouched: string[] = [];
@@ -183,35 +200,35 @@ function CameraFollower({
 			if (!previous.has(id)) newlyTouched.push(id);
 		}
 		previousIdsRef.current = highlightIds;
-		if (newlyTouched.length === 0) return;
+		if (newlyTouched.length > 0) {
+			pendingFitRef.current = newlyTouched;
+		}
+	}, [highlightIds]);
 
-		// Wait for the d3-force simulation to settle before pointing the
-		// camera at the new nodes — they're actively moving for ~1.5–2s
-		// after a graph change, so an early fitView ends up framing
-		// where the nodes WERE, not where they end up. The padding +
-		// maxZoom keep the framing pulled back so a single new node
-		// doesn't yank the user into a 100% zoom on a single card.
-		const handle = window.setTimeout(() => {
+	// Camera moves on settle. AI-follow takes priority over first-paint
+	// (if both are queued in the same settle, the user cares more about
+	// where gemma was working than about a panned-out overview).
+	useEffect(() => {
+		if (settledAt === 0) return;
+		if (graphNodeCount === 0) return;
+
+		const pending = pendingFitRef.current;
+		pendingFitRef.current = null;
+		if (pending && pending.length > 0) {
+			firstFitDoneRef.current = true;
 			fitView({
-				nodes: newlyTouched.map((id) => ({ id })),
+				nodes: pending.map((id) => ({ id })),
 				duration: 700,
 				padding: 0.6,
 				maxZoom: 0.8,
 			});
-		}, 1800);
-		return () => window.clearTimeout(handle);
-	}, [highlightIds, fitView]);
-
-	// First-paint: frame the whole graph once we have nodes. Without
-	// this the canvas opens at the default zoom and the user sees a
-	// distant cluster, not the work in progress.
-	const firstFitDoneRef = useRef(false);
-	useEffect(() => {
-		if (firstFitDoneRef.current) return;
-		if (graphNodeCount === 0) return;
-		firstFitDoneRef.current = true;
-		fitView({ duration: 400, padding: 0.3, maxZoom: 0.8 });
-	}, [graphNodeCount, fitView]);
+			return;
+		}
+		if (!firstFitDoneRef.current) {
+			firstFitDoneRef.current = true;
+			fitView({ duration: 600, padding: 0.3, maxZoom: 0.8 });
+		}
+	}, [settledAt, graphNodeCount, fitView]);
 
 	return null;
 }
@@ -421,7 +438,7 @@ function MeetingPrototype() {
 		}
 	}, [session.graph, selectedId]);
 
-	const positions = useForceLayout(session.graph);
+	const { positions, settledAt } = useForceLayout(session.graph);
 	const { nodes, edges } = useMemo(
 		() =>
 			layoutGraph(session.graph, session.highlightIds, selectedId, positions),
@@ -468,6 +485,7 @@ function MeetingPrototype() {
 								<CameraFollower
 									highlightIds={session.highlightIds}
 									graphNodeCount={session.graph.nodes.length}
+									settledAt={settledAt}
 								/>
 								<Panel position="top-left">
 									<MeetingStatusPanel

@@ -67,6 +67,19 @@ type SimLink = SimulationLinkDatum<SimNode>;
 
 export type PositionMap = ReadonlyMap<string, { x: number; y: number }>;
 
+export interface ForceLayoutResult {
+	positions: PositionMap;
+	/**
+	 * Timestamp (Date.now()) of the most recent simulation settle. Updated
+	 * each time the sim's `end` event fires (alpha drops below alphaMin).
+	 * Consumers like CameraFollower wait on this so they only fire fitView
+	 * when the nodes have actually stopped moving — otherwise the camera
+	 * frames mid-flight positions the simulation immediately leaves behind.
+	 * 0 before any settle has occurred.
+	 */
+	settledAt: number;
+}
+
 /**
  * Pick a starting position for a node that's just appeared in the graph.
  * If the node has any neighbors with known positions, drop it at their
@@ -98,8 +111,9 @@ function seedPosition(
 	return { x: sx / n + jitter(), y: sy / n + jitter() };
 }
 
-export function useForceLayout(graph: Graph): PositionMap {
+export function useForceLayout(graph: Graph): ForceLayoutResult {
 	const [positions, setPositions] = useState<PositionMap>(new Map());
+	const [settledAt, setSettledAt] = useState(0);
 	const simRef = useRef<Simulation<SimNode, SimLink> | null>(null);
 	// Persisted node refs — d3 mutates x/y/vx/vy on these, so reusing the
 	// same object across renders preserves the simulation state for nodes
@@ -162,6 +176,13 @@ export function useForceLayout(graph: Graph): PositionMap {
 						out.set(sn.id, { x: sn.x ?? 0, y: sn.y ?? 0 });
 					}
 					setPositions(out);
+				})
+				.on("end", () => {
+					// Fired when alpha drops below alphaMin. Bumping the
+					// timestamp lets the camera-follow logic frame the
+					// graph at the moment the nodes actually stop moving,
+					// instead of mid-flight at the start of a settle.
+					setSettledAt(Date.now());
 				});
 		} else {
 			simRef.current.nodes(simNodes);
@@ -178,5 +199,5 @@ export function useForceLayout(graph: Graph): PositionMap {
 		};
 	}, []);
 
-	return positions;
+	return { positions, settledAt };
 }
