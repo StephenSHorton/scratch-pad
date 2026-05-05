@@ -37,8 +37,7 @@ const ACTIONS: Action[] = [
 	{
 		id: "import_meeting",
 		label: "Import meeting…",
-		description:
-			"Process a transcript or recording (.txt / .md / .json / .wav / .mp3 / .m4a / .flac / .mp4 / .mov / .webm / .mkv) as a meeting",
+		description: "Process a transcript or recording as a meeting",
 	},
 	{
 		id: "new_pad",
