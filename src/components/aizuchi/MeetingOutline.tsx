@@ -1,9 +1,6 @@
 import { useMemo } from "react";
-import type {
-	Graph,
-	Node as AzNode,
-	NodeType,
-} from "@/lib/aizuchi/schemas";
+import type { Status } from "@/hooks/useMeetingSession";
+import type { Node as AzNode, Graph, NodeType } from "@/lib/aizuchi/schemas";
 
 const SECTION_ORDER: { type: NodeType; label: string }[] = [
 	{ type: "person", label: "People" },
@@ -16,7 +13,17 @@ const SECTION_ORDER: { type: NodeType; label: string }[] = [
 	{ type: "context", label: "Context" },
 ];
 
-export function MeetingOutline({ graph }: { graph: Graph }) {
+export function MeetingOutline({
+	graph,
+	status,
+	generatingNotes,
+	onGenerateNotes,
+}: {
+	graph: Graph;
+	status: Status;
+	generatingNotes: boolean;
+	onGenerateNotes: () => void;
+}) {
 	const byType = useMemo(() => {
 		const map = new Map<NodeType, AzNode[]>();
 		for (const n of graph.nodes) {
@@ -27,12 +34,25 @@ export function MeetingOutline({ graph }: { graph: Graph }) {
 		return map;
 	}, [graph]);
 
+	const canGenerate = graph.nodes.length > 0 || status === "done";
+
 	return (
 		<div className="h-full w-full overflow-y-auto bg-background p-6 font-sans text-foreground">
 			<h1 className="mb-1 text-lg font-semibold">Meeting outline</h1>
-			<p className="mb-5 text-xs text-muted-foreground">
+			<p className="mb-3 text-xs text-muted-foreground">
 				{graph.nodes.length} nodes · {graph.edges.length} edges
 			</p>
+
+			{canGenerate && (
+				<button
+					type="button"
+					onClick={onGenerateNotes}
+					disabled={generatingNotes}
+					className="mb-5 rounded-md bg-sky-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-60"
+				>
+					{generatingNotes ? "Generating scratch pad…" : "Generate scratch pad"}
+				</button>
+			)}
 
 			{graph.nodes.length === 0 && (
 				<p className="text-sm italic text-muted-foreground">
