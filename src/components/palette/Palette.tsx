@@ -38,7 +38,7 @@ const ACTIONS: Action[] = [
 		id: "import_meeting",
 		label: "Import meeting…",
 		description:
-			"Process a transcript or recording (.txt / .md / .json / .wav / .mp3 / .m4a / .flac / .mp4 / .mov) as a meeting",
+			"Process a transcript or recording (.txt / .md / .json / .wav / .mp3 / .m4a / .flac / .mp4 / .mov / .webm / .mkv) as a meeting",
 	},
 	{
 		id: "new_pad",
@@ -311,7 +311,16 @@ export function Palette() {
 			// subsequent (potentially multi-minute) whisper run so the user
 			// has a visible "transcribing…" indicator. Suppress focus-blur
 			// auto-close while the import is in flight.
-			const audioVideoExts = ["wav", "mp3", "m4a", "flac", "mp4", "mov"];
+			const audioVideoExts = [
+				"wav",
+				"mp3",
+				"m4a",
+				"flac",
+				"mp4",
+				"mov",
+				"webm",
+				"mkv",
+			];
 			importingRef.current = true;
 			openDialog({
 				multiple: false,

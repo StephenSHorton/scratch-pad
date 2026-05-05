@@ -37,8 +37,16 @@ cpal = "0.15"
 hound = "3.5"
 whisper-rs = "0.16"
 # AIZ-31 — decode .mp3/.m4a/.flac for offline audio import. WAV stays on
-# `hound` for the live-capture path. Pure-Rust, no native deps.
-symphonia = { version = "0.5", features = ["mp3", "aac", "alac", "flac", "isomp4"] }
+# `hound` for the live-capture path. Pure-Rust, no native deps. AIZ-37
+# adds `mkv` (covers .mkv and .webm — same Matroska container) so we can
+# demux browser/screen-recorder output; the Opus codec inside those
+# containers is decoded by `opus-decoder` (symphonia 0.5 has no Opus
+# decoder of its own).
+symphonia = { version = "0.5", features = ["mp3", "aac", "alac", "flac", "isomp4", "mkv"] }
+# AIZ-37 — pure-Rust Opus decoder (RFC 8251 conformant, no FFI, forbid
+# unsafe). Used for `.webm`/`.mkv` audio tracks where symphonia hands us
+# Opus packets but cannot decode them.
+opus-decoder = "0.1"
 
 # IPC server (AIZ-20)
 hyper = { version = "1", features = ["http1", "server"] }

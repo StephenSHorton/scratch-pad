@@ -378,6 +378,10 @@ fn transcribe_samples(
 /// reads audio tracks out of both audio-only files and video containers
 /// (the video stream is silently ignored). `.mp4` / `.mov` are the same
 /// ISO BMFF container as `.m4a`, so they share the same code path.
+/// `.webm` and `.mkv` share the Matroska container (symphonia's `mkv`
+/// feature handles both). Their audio is almost always Opus, which
+/// symphonia 0.5 demuxes but cannot decode — see `decode_with_symphonia`
+/// for the Opus branch that hands packets to the pure-Rust `opus-decoder`.
 /// Other extensions are rejected so we can give the user a useful error
 /// rather than a downstream symphonia probe failure.
 pub fn decode_audio_to_mono_16k(path: &Path) -> Result<Vec<f32>, String> {
@@ -388,23 +392,26 @@ pub fn decode_audio_to_mono_16k(path: &Path) -> Result<Vec<f32>, String> {
         .to_lowercase();
     match ext.as_str() {
         "wav" => load_wav_as_mono_16k(path),
-        "mp3" | "m4a" | "flac" | "mp4" | "mov" => decode_with_symphonia(path),
+        "mp3" | "m4a" | "flac" | "mp4" | "mov" | "webm" | "mkv" => {
+            decode_with_symphonia(path)
+        }
         other if other.is_empty() => Err(
-            "Media file has no extension; expected .wav, .mp3, .m4a, .flac, .mp4, or .mov".into(),
+            "Media file has no extension; expected .wav, .mp3, .m4a, .flac, .mp4, .mov, .webm, or .mkv"
+                .into(),
         ),
         other => Err(format!(
-            "Unsupported media extension: .{other}. Use .wav, .mp3, .m4a, .flac, .mp4, or .mov."
+            "Unsupported media extension: .{other}. Use .wav, .mp3, .m4a, .flac, .mp4, .mov, .webm, or .mkv."
         )),
     }
 }
 
-/// Decode an `.mp3` / `.m4a` / `.flac` file via symphonia, downmix to
-/// mono, and resample to 16 kHz. Returns the f32 PCM buffer whisper
-/// expects.
+/// Decode a symphonia-supported file (mp3/m4a/flac/mp4/mov/webm/mkv) to
+/// mono 16 kHz f32 PCM. Most codecs go through symphonia end-to-end;
+/// Opus tracks (browser WebM, screen recorders, etc.) are demuxed by
+/// symphonia but decoded with the pure-Rust `opus-decoder` crate because
+/// symphonia 0.5 has no Opus decoder of its own.
 fn decode_with_symphonia(path: &Path) -> Result<Vec<f32>, String> {
-    use symphonia::core::audio::SampleBuffer;
-    use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
-    use symphonia::core::errors::Error as SymphoniaError;
+    use symphonia::core::codecs::{CODEC_TYPE_NULL, CODEC_TYPE_OPUS};
     use symphonia::core::formats::FormatOptions;
     use symphonia::core::io::MediaSourceStream;
     use symphonia::core::meta::MetadataOptions;
@@ -427,23 +434,46 @@ fn decode_with_symphonia(path: &Path) -> Result<Vec<f32>, String> {
             &MetadataOptions::default(),
         )
         .map_err(|e| format!("Failed to probe audio format: {e}"))?;
-    let mut format = probed.format;
+    let format = probed.format;
 
-    let track = format
-        .tracks()
-        .iter()
-        .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
-        .ok_or("No decodable audio track found in file")?;
-    let track_id = track.id;
+    // Snapshot what we need from the borrowed track so we can move
+    // `format` into the per-codec helper.
+    let (codec, track_id, codec_params) = {
+        let track = format
+            .tracks()
+            .iter()
+            .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+            .ok_or("No decodable audio track found in file")?;
+        (track.codec_params.codec, track.id, track.codec_params.clone())
+    };
+
+    if codec == CODEC_TYPE_OPUS {
+        decode_opus_track(format, track_id, &codec_params)
+    } else {
+        decode_symphonia_track(format, track_id, &codec_params)
+    }
+}
+
+/// Drives the symphonia decoder for a single audio track and returns
+/// mono f32 PCM at 16 kHz.
+fn decode_symphonia_track(
+    mut format: Box<dyn symphonia::core::formats::FormatReader>,
+    track_id: u32,
+    codec_params: &symphonia::core::codecs::CodecParameters,
+) -> Result<Vec<f32>, String> {
+    use symphonia::core::audio::SampleBuffer;
+    use symphonia::core::codecs::DecoderOptions;
+    use symphonia::core::errors::Error as SymphoniaError;
+
     // Container probes don't always populate sample_rate / channels up
     // front (m4a in particular surfaces them only after the first
     // decoded packet). Read both lazily from the first decoded buffer's
     // spec; codec_params is just an early hint.
-    let mut sample_rate = track.codec_params.sample_rate;
-    let mut channels: Option<usize> = track.codec_params.channels.map(|c| c.count());
+    let mut sample_rate = codec_params.sample_rate;
+    let mut channels: Option<usize> = codec_params.channels.map(|c| c.count());
 
     let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &DecoderOptions::default())
+        .make(codec_params, &DecoderOptions::default())
         .map_err(|e| format!("Failed to create audio decoder: {e}"))?;
 
     let mut sample_buf: Option<SampleBuffer<f32>> = None;
@@ -498,8 +528,83 @@ fn decode_with_symphonia(path: &Path) -> Result<Vec<f32>, String> {
     let channels = channels.ok_or("Audio track has unknown channel layout")?;
     let sample_rate = sample_rate.ok_or("Audio track has unknown sample rate")?;
 
+    Ok(downmix_and_resample(&interleaved, channels, sample_rate))
+}
+
+/// Decode an Opus track (typical inside `.webm`/`.mkv` from MediaRecorder,
+/// Loom, Tella, etc.) using the pure-Rust `opus-decoder` crate. Symphonia
+/// hands us one Opus packet per call; each packet decodes to 2.5–60 ms of
+/// audio at 48 kHz. We feed the decoder at 48 kHz / native channels, then
+/// downmix and resample to mono 16 kHz like every other path.
+fn decode_opus_track(
+    mut format: Box<dyn symphonia::core::formats::FormatReader>,
+    track_id: u32,
+    codec_params: &symphonia::core::codecs::CodecParameters,
+) -> Result<Vec<f32>, String> {
+    use symphonia::core::errors::Error as SymphoniaError;
+
+    // Opus always decodes at 48 kHz internally per RFC 6716. The track's
+    // codec_params.sample_rate is the *original* capture rate hint; we
+    // ignore it for decode and resample from 48 kHz to 16 kHz at the end.
+    const OPUS_DECODE_RATE: u32 = 48_000;
+    let channels: usize = codec_params
+        .channels
+        .map(|c| c.count())
+        .filter(|&n| n > 0)
+        .unwrap_or(1);
+    if channels > 2 {
+        return Err(format!(
+            "Opus track has {channels} channels; only mono and stereo are supported"
+        ));
+    }
+
+    let mut decoder = opus_decoder::OpusDecoder::new(OPUS_DECODE_RATE, channels)
+        .map_err(|e| format!("Failed to create Opus decoder: {e}"))?;
+
+    // Maximum Opus frame is 120 ms; at 48 kHz that's 5760 samples per
+    // channel. Reuse this scratch buffer across packets to avoid churn.
+    let max_samples_per_channel: usize = 5_760;
+    let mut scratch: Vec<f32> = vec![0.0; max_samples_per_channel * channels];
+    let mut interleaved: Vec<f32> = Vec::new();
+
+    loop {
+        let packet = match format.next_packet() {
+            Ok(p) => p,
+            Err(SymphoniaError::IoError(e))
+                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                break;
+            }
+            Err(SymphoniaError::ResetRequired) => break,
+            Err(e) => return Err(format!("Read packet failed: {e}")),
+        };
+        if packet.track_id() != track_id {
+            continue;
+        }
+        match decoder.decode_float(packet.buf(), &mut scratch, false) {
+            Ok(samples_per_channel) => {
+                let n = samples_per_channel * channels;
+                interleaved.extend_from_slice(&scratch[..n]);
+            }
+            Err(e) => {
+                eprintln!("[audio-import] opus decode error (skipping packet): {e}");
+                continue;
+            }
+        }
+    }
+
+    if interleaved.is_empty() {
+        return Err("Opus track decoded to zero samples".into());
+    }
+
+    Ok(downmix_and_resample(&interleaved, channels, OPUS_DECODE_RATE))
+}
+
+/// Downmix interleaved multichannel f32 PCM to mono and resample to
+/// 16 kHz — the format whisper consumes.
+fn downmix_and_resample(interleaved: &[f32], channels: usize, sample_rate: u32) -> Vec<f32> {
     let mono: Vec<f32> = if channels <= 1 {
-        interleaved
+        interleaved.to_vec()
     } else {
         interleaved
             .chunks(channels)
@@ -508,9 +613,9 @@ fn decode_with_symphonia(path: &Path) -> Result<Vec<f32>, String> {
     };
 
     if sample_rate == 16_000 {
-        Ok(mono)
+        mono
     } else {
-        Ok(resample_linear(&mono, sample_rate, 16_000))
+        resample_linear(&mono, sample_rate, 16_000)
     }
 }
 
