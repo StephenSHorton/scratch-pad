@@ -4,12 +4,14 @@ import {
 	forceLink,
 	forceManyBody,
 	forceSimulation,
+	forceX,
+	forceY,
 	type Simulation,
 	type SimulationLinkDatum,
 	type SimulationNodeDatum,
 } from "d3-force";
 import { useEffect, useRef, useState } from "react";
-import type { EdgeRelation, Graph } from "@/lib/aizuchi/schemas";
+import type { EdgeRelation, Graph, NodeType } from "@/lib/aizuchi/schemas";
 
 /**
  * AIZ-12 — d3-force-driven layout for the meeting canvas. Replaces the
@@ -36,6 +38,38 @@ const CARD_H = 160;
 // never visually overlap at rest.
 const COLLISION_RADIUS = Math.hypot(CARD_W, CARD_H) / 2 + 24;
 
+/**
+ * AIZ-12 — soft vertical bands per node type. Mirrors the natural flow
+ * of a meeting from top to bottom: who's talking → what they're
+ * discussing → uncertainty → substance → outputs/problems. The y-force
+ * is gentle (strength 0.06) so connected nodes can still pull
+ * cross-band when their relationship demands it; the bands are a
+ * preference, not a wall.
+ */
+const TYPE_Y: Record<NodeType, number> = {
+	// Origin / setup
+	person: -550,
+	topic: -350,
+	context: -250,
+	// Uncertainty / framing
+	assumption: -150,
+	hypothesis: -50,
+	question: 0,
+	// Substance
+	work_item: 100,
+	decision: 100,
+	sentiment: 100,
+	// Concrete things
+	artifact: 220,
+	metric: 220,
+	event: 220,
+	// Outputs / problems
+	blocker: 360,
+	risk: 360,
+	constraint: 360,
+	action_item: 480,
+};
+
 const RELATION_LINK: Record<
 	EdgeRelation,
 	{ distance: number; strength: number }
@@ -61,6 +95,10 @@ const RELATION_LINK: Record<
 
 interface SimNode extends SimulationNodeDatum {
 	id: string;
+	type: NodeType;
+	/** True for the most-connected node in the graph; pulled hard to (0,0)
+	 * to anchor the layout. */
+	isHub: boolean;
 }
 
 type SimLink = SimulationLinkDatum<SimNode>;
@@ -126,16 +164,44 @@ export function useForceLayout(graph: Graph): ForceLayoutResult {
 	const simNodesRef = useRef<SimNode[]>([]);
 
 	useEffect(() => {
+		// Find the most-connected node — it'll be pulled to the origin
+		// so the rest of the graph orbits around it (Obsidian-style).
+		const degrees = new Map<string, number>();
+		for (const e of graph.edges) {
+			degrees.set(e.from, (degrees.get(e.from) ?? 0) + 1);
+			degrees.set(e.to, (degrees.get(e.to) ?? 0) + 1);
+		}
+		let hubId: string | null = null;
+		let maxDegree = 0;
+		for (const [id, d] of degrees) {
+			if (d > maxDegree) {
+				maxDegree = d;
+				hubId = id;
+			}
+		}
+		// At least 3 connections to be considered a "hub" — otherwise no
+		// single node should hijack the centering force.
+		if (maxDegree < 3) hubId = null;
+
 		// Build/refresh the SimNode set, preserving positions for nodes
 		// that already existed.
 		const next = new Map<string, SimNode>();
 		for (const n of graph.nodes) {
 			const existing = nodesRef.current.get(n.id);
+			const isHub = n.id === hubId;
 			if (existing) {
+				existing.type = n.type;
+				existing.isHub = isHub;
 				next.set(n.id, existing);
 			} else {
 				const seed = seedPosition(n.id, graph, nodesRef.current);
-				next.set(n.id, { id: n.id, x: seed.x, y: seed.y });
+				next.set(n.id, {
+					id: n.id,
+					type: n.type,
+					isHub,
+					x: seed.x,
+					y: seed.y,
+				});
 			}
 		}
 		nodesRef.current = next;
@@ -159,12 +225,27 @@ export function useForceLayout(graph: Graph): ForceLayoutResult {
 			.distance((l) => (l as SimLink & { distance?: number }).distance ?? 280)
 			.strength((l) => (l as SimLink & { strength?: number }).strength ?? 0.4);
 
+		// Per-type vertical band — soft pull toward TYPE_Y[type]. Strength
+		// 0.06 is a preference, not a constraint; cross-band edges will
+		// still pull connected nodes together.
+		const typeY = forceY<SimNode>((d) => TYPE_Y[d.type]).strength(0.06);
+
+		// Hub anchor — the most-connected node (if any) is pinned strongly
+		// to the origin so the rest of the graph orbits around it. Other
+		// nodes get a near-zero force here so the existing center force is
+		// the only thing centering them.
+		const hubX = forceX<SimNode>(0).strength((d) => (d.isHub ? 0.4 : 0));
+		const hubY = forceY<SimNode>(0).strength((d) => (d.isHub ? 0.4 : 0));
+
 		if (!simRef.current) {
 			simRef.current = forceSimulation<SimNode, SimLink>(simNodes)
 				.force("link", link)
 				.force("charge", forceManyBody<SimNode>().strength(-800))
 				.force("center", forceCenter(0, 0).strength(0.18))
 				.force("collide", forceCollide<SimNode>(COLLISION_RADIUS).strength(0.9))
+				.force("typeY", typeY)
+				.force("hubX", hubX)
+				.force("hubY", hubY)
 				.alphaDecay(0.05)
 				.alphaMin(0.002)
 				.on("tick", () => {
@@ -187,6 +268,12 @@ export function useForceLayout(graph: Graph): ForceLayoutResult {
 		} else {
 			simRef.current.nodes(simNodes);
 			simRef.current.force("link", link);
+			// Re-attach the per-node forces so they read from the latest
+			// SimNode set (each call captures the current `simNodes` via
+			// the accessor functions).
+			simRef.current.force("typeY", typeY);
+			simRef.current.force("hubX", hubX);
+			simRef.current.force("hubY", hubY);
 			// Bump alpha so newly-added nodes settle in.
 			simRef.current.alpha(0.6).restart();
 		}
