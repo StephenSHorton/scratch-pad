@@ -186,10 +186,24 @@ function CameraFollower({
 	graphNodeCount: number;
 	settledAt: number;
 }) {
-	const { fitView } = useReactFlow();
+	const { fitView, setCenter } = useReactFlow();
 	const previousIdsRef = useRef<ReadonlySet<string>>(new Set());
 	const pendingFitRef = useRef<string[] | null>(null);
 	const firstFitDoneRef = useRef(false);
+	const initialFrameDoneRef = useRef(false);
+
+	// As soon as the graph has any node, snap the viewport to a stable
+	// wide view of the canvas center. The sim seeds new nodes near (0,0)
+	// and takes ~1.8s to spread them — without this, the user stares at a
+	// clump of overlapping cards before the first settle. Instant snap
+	// (duration: 0) so the user doesn't see a startup animation; a real
+	// fitView animates in once `settledAt` fires below.
+	useEffect(() => {
+		if (initialFrameDoneRef.current) return;
+		if (graphNodeCount === 0) return;
+		initialFrameDoneRef.current = true;
+		setCenter(0, 0, { zoom: 0.4, duration: 0 });
+	}, [graphNodeCount, setCenter]);
 
 	// Track new highlightIds → queue them for the next settle. We don't
 	// fire fitView from here; the settle effect below does it.
