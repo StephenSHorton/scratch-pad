@@ -105,6 +105,11 @@ export function useForceLayout(graph: Graph): PositionMap {
 	// same object across renders preserves the simulation state for nodes
 	// that didn't change.
 	const nodesRef = useRef<Map<string, SimNode>>(new Map());
+	// Live array the tick callback reads from. Held in a ref so subsequent
+	// graph updates (which mutate the simulation via `.nodes()` + restart)
+	// don't leave the tick handler iterating the empty array captured the
+	// first time the simulation was created.
+	const simNodesRef = useRef<SimNode[]>([]);
 
 	useEffect(() => {
 		// Build/refresh the SimNode set, preserving positions for nodes
@@ -121,6 +126,7 @@ export function useForceLayout(graph: Graph): PositionMap {
 		}
 		nodesRef.current = next;
 		const simNodes = [...next.values()];
+		simNodesRef.current = simNodes;
 
 		// d3-force mutates the link source/target from string ids into
 		// node references, so always start from a fresh array to avoid
@@ -148,8 +154,11 @@ export function useForceLayout(graph: Graph): PositionMap {
 				.alphaDecay(0.05)
 				.alphaMin(0.002)
 				.on("tick", () => {
+					// Read from the ref, not the closure — `simNodes` here
+					// is stale once the simulation is reused for a later
+					// graph update via `.nodes(...).restart()`.
 					const out = new Map<string, { x: number; y: number }>();
-					for (const sn of simNodes) {
+					for (const sn of simNodesRef.current) {
 						out.set(sn.id, { x: sn.x ?? 0, y: sn.y ?? 0 });
 					}
 					setPositions(out);
