@@ -11,7 +11,6 @@ export function MeetingStatusPanel({
 	graph,
 	error,
 	stats,
-	generatingNotes,
 	archivedAt,
 	name,
 	nameLockedByUser,
@@ -23,7 +22,6 @@ export function MeetingStatusPanel({
 	onPause,
 	onResume,
 	onReset,
-	onGenerateNotes,
 }: {
 	status: Status;
 	mode: Mode;
@@ -32,7 +30,6 @@ export function MeetingStatusPanel({
 	graph: Graph;
 	error: string | null;
 	stats: RunStats;
-	generatingNotes: boolean;
 	archivedAt: number | null;
 	name: string | null;
 	nameLockedByUser: boolean;
@@ -44,7 +41,6 @@ export function MeetingStatusPanel({
 	onPause: () => void;
 	onResume: () => void;
 	onReset: () => void;
-	onGenerateNotes: () => void;
 }) {
 	const isArchived = status === "archived";
 
@@ -213,19 +209,6 @@ export function MeetingStatusPanel({
 					</button>
 				)}
 			</div>
-
-			{(graph.nodes.length > 0 || status === "done") && (
-				<div className="flex flex-wrap gap-1.5">
-					<button
-						type="button"
-						onClick={onGenerateNotes}
-						disabled={generatingNotes}
-						className="rounded-md bg-sky-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-sky-500 disabled:cursor-not-allowed disabled:opacity-60"
-					>
-						{generatingNotes ? "Generating notes…" : "Generate meeting notes"}
-					</button>
-				</div>
-			)}
 
 			{status === "idle" && (
 				<div className="rounded border border-border/40 bg-muted/30 p-2 text-[11px] text-muted-foreground">

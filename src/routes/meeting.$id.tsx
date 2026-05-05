@@ -310,7 +310,6 @@ function MeetingPrototype() {
 										graph={session.graph}
 										error={session.error}
 										stats={session.stats}
-										generatingNotes={session.generatingNotes}
 										archivedAt={session.archivedAt}
 										name={session.name}
 										nameLockedByUser={session.nameLockedByUser}
@@ -322,7 +321,6 @@ function MeetingPrototype() {
 										onPause={session.pauseDemo}
 										onResume={session.resumeDemo}
 										onReset={session.resetDemo}
-										onGenerateNotes={session.generateNotes}
 									/>
 								</Panel>
 								{session.transcript.length > 0 && (
@@ -354,7 +352,12 @@ function MeetingPrototype() {
 					collapsedSize={0}
 					onResize={handleOutlineResize}
 				>
-					<MeetingOutline graph={session.graph} />
+					<MeetingOutline
+						graph={session.graph}
+						status={session.status}
+						generatingNotes={session.generatingNotes}
+						onGenerateNotes={session.generateNotes}
+					/>
 				</ResizePanel>
 			</ResizeGroup>
 		</div>
