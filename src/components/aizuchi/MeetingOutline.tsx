@@ -1,11 +1,8 @@
-import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useEffect, useMemo, useState } from "react";
-import {
-	emptyGraph,
-	type Graph,
-	type Node as AzNode,
-	type NodeType,
+import { useMemo } from "react";
+import type {
+	Graph,
+	Node as AzNode,
+	NodeType,
 } from "@/lib/aizuchi/schemas";
 
 const SECTION_ORDER: { type: NodeType; label: string }[] = [
@@ -19,22 +16,7 @@ const SECTION_ORDER: { type: NodeType; label: string }[] = [
 	{ type: "context", label: "Context" },
 ];
 
-export function MeetingOutline() {
-	const [graph, setGraph] = useState<Graph>(emptyGraph);
-
-	useEffect(() => {
-		const unlistenGraph = listen<Graph>("graph-update", (event) => {
-			setGraph(event.payload);
-		});
-		const unlistenClose = listen("meeting-close", () => {
-			getCurrentWindow().close().catch(() => {});
-		});
-		return () => {
-			unlistenGraph.then((fn) => fn()).catch(() => {});
-			unlistenClose.then((fn) => fn()).catch(() => {});
-		};
-	}, []);
-
+export function MeetingOutline({ graph }: { graph: Graph }) {
 	const byType = useMemo(() => {
 		const map = new Map<NodeType, AzNode[]>();
 		for (const n of graph.nodes) {
@@ -46,7 +28,7 @@ export function MeetingOutline() {
 	}, [graph]);
 
 	return (
-		<div className="h-screen w-screen overflow-y-auto bg-background p-6 font-sans text-foreground">
+		<div className="h-full w-full overflow-y-auto bg-background p-6 font-sans text-foreground">
 			<h1 className="mb-1 text-lg font-semibold">Meeting outline</h1>
 			<p className="mb-5 text-xs text-muted-foreground">
 				{graph.nodes.length} nodes · {graph.edges.length} edges

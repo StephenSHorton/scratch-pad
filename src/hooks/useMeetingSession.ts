@@ -132,8 +132,6 @@ export interface MeetingSession {
  *   hook hydrates and switches to `archived` status (read-only viewing)
  */
 export function useMeetingSession(meetingId: string): MeetingSession {
-	const outlineLabel = `meeting-outline-${meetingId}`;
-
 	const [graph, setGraph] = useState<Graph>(emptyGraph);
 	const [status, setStatus] = useState<Status>("idle");
 	const [batchIdx, setBatchIdx] = useState(0);
@@ -242,12 +240,6 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		setPasses(passesRef.current);
 	};
 
-	const emitGraph = (g: Graph) => {
-		getCurrentWindow()
-			.emitTo(outlineLabel, "graph-update", g)
-			.catch(() => {});
-	};
-
 	const resetSessionState = (nextMode: Mode) => {
 		setMode(nextMode);
 		modeRef.current = nextMode;
@@ -281,7 +273,6 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		extractionModeRef.current = undefined;
 		setName(null);
 		setNameLockedByUser(false);
-		emitGraph(startGraph);
 		return startGraph;
 	};
 
@@ -385,9 +376,6 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		namingInFlightRef.current = false;
 		setName(snap.name ?? null);
 		setNameLockedByUser(snap.nameLockedByUser ?? false);
-		// The outline window may mount after us — retry the graph emit a
-		// few times so it picks up the saved state regardless of order.
-		[200, 700, 1500].forEach((d) => setTimeout(() => emitGraph(snap.graph), d));
 	};
 
 	useEffect(() => {
@@ -528,7 +516,6 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 
 				current = next;
 				updateGraph(next);
-				emitGraph(next);
 				applyThoughts(result.diff.notes);
 				consumedChunksRef.current += batch.chunks.length;
 				recordPass(idx, consumedChunksRef.current, result.diff.notes);
@@ -763,17 +750,10 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		setStatus("done");
 	};
 
-	const closeMeetingWindows = () => {
-		const win = getCurrentWindow();
-		win.emitTo(outlineLabel, "meeting-close", null).catch(() => {});
-		win.close().catch(() => {});
-	};
-
 	const resetDemo = () => {
-		// Archived view: Reset is repurposed to "Close" — close the
-		// meeting + outline windows for this id.
+		// Archived view: Reset is repurposed to "Close" — close the meeting window.
 		if (status === "archived") {
-			closeMeetingWindows();
+			getCurrentWindow().close().catch(() => {});
 			return;
 		}
 		signalRef.current.cancelled = true;
@@ -808,7 +788,6 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		namingInFlightRef.current = false;
 		setName(null);
 		setNameLockedByUser(false);
-		emitGraph(empty);
 	};
 
 	// AIZ-16 — public setter. User-typed name locks the AI naming loop.
