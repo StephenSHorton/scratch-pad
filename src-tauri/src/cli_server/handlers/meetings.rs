@@ -271,22 +271,22 @@ pub async fn import_audio(
     let payload: ImportAudioMeetingBody = serde_json::from_slice(body)
         .map_err(|e| IpcError::ValidationError(format!("body: {e}")))?;
 
-    let app = ctx.app.clone();
     let path_buf = std::path::PathBuf::from(&payload.path);
-    let staged = tauri::async_runtime::spawn_blocking(move || {
-        audio_import::stage_pending_audio_import(&app, &path_buf)
-    })
-    .await
-    .map_err(|e| IpcError::Internal(format!("audio import join: {e}")))?
-    .map_err(IpcError::ValidationError)?;
+    // AIZ-47 — start_streaming_audio_import is non-blocking: it stages
+    // an empty PendingImport, opens the meeting window, and spawns the
+    // whisper worker thread. Segments arrive over Tauri events keyed by
+    // the import id. `chunkCount: 0` is reported up front; the meeting
+    // window is the source of truth for streaming progress.
+    let started = audio_import::start_streaming_audio_import(&ctx.app, &path_buf)
+        .map_err(IpcError::ValidationError)?;
 
     Ok(json_response(
         StatusCode::OK,
         &ImportMeetingResponse {
-            id: staged.id,
+            id: started.id,
             opened_window: true,
-            chunk_count: staged.chunk_count,
-            source_file: staged.source_file,
+            chunk_count: 0,
+            source_file: started.source_file,
         },
     ))
 }

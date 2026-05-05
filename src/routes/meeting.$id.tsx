@@ -396,11 +396,17 @@ function MeetingPrototype() {
 				// and feed them to startImport. `take_pending_import` returns
 				// `null` if the id has no entry (already consumed, or never
 				// staged) — in that case there's nothing to do.
+				// AIZ-47 — if `streaming: true`, the staged entry has no
+				// chunks; whisper is producing them right now and emitting
+				// `audio-import-segment` events keyed by `id`. Branch to
+				// `startImportStream` so the existing batch loop reads
+				// from the stream instead of a static array.
 				invoke<{
 					chunks: TranscriptChunk[];
 					sourceFile: string;
 					extractionMode: ExtractionMode;
 					source: MeetingSource;
+					streaming?: boolean;
 				} | null>("take_pending_import", { id })
 					.then((pending) => {
 						if (!pending) {
@@ -408,6 +414,14 @@ function MeetingPrototype() {
 								`[meeting] no pending import for ${id} — nothing to do`,
 							);
 							return;
+						}
+						if (pending.streaming) {
+							return session.startImportStream(
+								id,
+								pending.sourceFile,
+								pending.extractionMode,
+								pending.source,
+							);
 						}
 						return session.startImport(
 							pending.chunks,
@@ -439,6 +453,17 @@ function MeetingPrototype() {
 		);
 		return () => {
 			unlistenPromise.then((fn) => fn()).catch(() => {});
+		};
+	}, [id]);
+
+	// AIZ-47 — when the meeting window unmounts (close, navigate away)
+	// during a streaming audio import, ask the backend to abort whisper
+	// so we don't burn CPU on a transcription whose output goes nowhere.
+	// Idempotent on the Rust side — safe to call when the import has
+	// already finished or never started.
+	useEffect(() => {
+		return () => {
+			invoke("cancel_audio_import", { id }).catch(() => {});
 		};
 	}, [id]);
 
@@ -513,6 +538,8 @@ function MeetingPrototype() {
 										archivedAt={session.archivedAt}
 										name={session.name}
 										nameLockedByUser={session.nameLockedByUser}
+										importStreamSegmentCount={session.importStreamSegmentCount}
+										importStreamFinished={session.importStreamFinished}
 										onSetName={session.setMeetingName}
 										onStartDemo={session.startDemo}
 										onStartLive={session.startLive}

@@ -11,7 +11,9 @@ use std::time::Duration;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::SampleFormat;
-use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+use whisper_rs::{
+    FullParams, SamplingStrategy, SegmentCallbackData, WhisperContext, WhisperContextParameters,
+};
 
 // small.en-tdrz (~488MB) is the tinydiarize-finetuned small.en model. It
 // emits speaker-turn predictions alongside transcription so we can split
@@ -299,19 +301,99 @@ pub fn transcribe_file(
     transcribe_samples(model_path, &samples)
 }
 
-/// AIZ-31 — single entry point for offline audio import. Dispatches the
-/// decode by extension (`.wav` via `hound`, `.mp3`/`.m4a`/`.flac` via
-/// symphonia), then runs whisper on the unified mono-16k f32 buffer.
-/// Blocking — run on a worker thread.
-pub fn transcribe_audio_file(
+/// AIZ-47 — single entry point for offline audio import. Invokes
+/// `on_segment` from inside whisper.cpp's `new_segment_callback` so the
+/// caller sees segments as the encoder produces them, instead of waiting
+/// for `state.full(...)` to return at the end.
+///
+/// The safe whisper-rs callback (`set_segment_callback_safe`) hides the
+/// speaker-turn flag, so every emitted segment is labelled "Speaker A".
+/// Audio import forces Substance extraction mode (see `audio_import.rs`),
+/// so the speaker label is unused by the downstream prompt — losing it
+/// here costs nothing today and keeps the streaming hot path free of
+/// `unsafe` FFI handling.
+///
+/// `abort` is polled by ggml between graph evaluations; returning `true`
+/// stops inference and `state.full(...)` returns
+/// `WhisperError::GenericError(-1)`, which we surface as a sentinel
+/// `Err("aborted".into())` so callers can distinguish a clean cancel
+/// from a real failure.
+///
+/// Returns the decoded audio duration in milliseconds so the caller can
+/// estimate how many segments are still to come (whisper.cpp gives no
+/// total-segments hint up front).
+pub fn transcribe_audio_file_streaming<F, A>(
     model_path: &Path,
     audio_path: &Path,
-) -> Result<Vec<TranscriptSegment>, String> {
+    on_segment: F,
+    abort: A,
+) -> Result<i64, String>
+where
+    F: FnMut(TranscriptSegment) + Send + 'static,
+    A: FnMut() -> bool + Send + 'static,
+{
     let samples = decode_audio_to_mono_16k(audio_path)?;
     if samples.is_empty() {
         return Err("Audio file decoded to zero samples".into());
     }
-    transcribe_samples(model_path, &samples)
+    let duration_ms = (samples.len() as i64) * 1000 / 16_000;
+
+    let model_str = model_path
+        .to_str()
+        .ok_or("Model path is not valid UTF-8")?;
+    let ctx = WhisperContext::new_with_params(model_str, WhisperContextParameters::default())
+        .map_err(|e| format!("Failed to load whisper model: {e}"))?;
+    let mut state = ctx
+        .create_state()
+        .map_err(|e| format!("Failed to create whisper state: {e}"))?;
+
+    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+    params.set_n_threads(4);
+    params.set_translate(false);
+    params.set_language(Some("en"));
+    params.set_print_progress(false);
+    params.set_print_realtime(false);
+    params.set_print_special(false);
+    params.set_print_timestamps(false);
+    // tdrz is still enabled for parity with the blocking path; the speaker
+    // turns it predicts are observable through `state` but not through the
+    // safe segment callback's `SegmentCallbackData`. Leaving it on is
+    // harmless and avoids divergent decode behavior between the two
+    // entry points.
+    params.set_tdrz_enable(true);
+
+    let mut on_seg = on_segment;
+    params.set_segment_callback_safe(move |data: SegmentCallbackData| {
+        let text = data.text.trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+        // whisper.cpp returns timestamps in 10ms units.
+        on_seg(TranscriptSegment {
+            text,
+            start_ms: data.start_timestamp * 10,
+            end_ms: data.end_timestamp * 10,
+            speaker: speaker_label(0),
+        });
+    });
+
+    let mut abort_fn = abort;
+    params.set_abort_callback_safe(move || abort_fn());
+
+    match state.full(params, &samples) {
+        Ok(_) => Ok(duration_ms),
+        Err(e) => {
+            // Distinguish abort (caller cancelled) from real failure.
+            // ggml's abort path surfaces as a generic -1 from whisper_full,
+            // and the error string contains the C return code.
+            let msg = format!("{e}");
+            if msg.contains("-1") {
+                Err("aborted".into())
+            } else {
+                Err(format!("Whisper inference failed: {e}"))
+            }
+        }
+    }
 }
 
 /// Whisper invocation shared between the WAV and decoded-audio paths.

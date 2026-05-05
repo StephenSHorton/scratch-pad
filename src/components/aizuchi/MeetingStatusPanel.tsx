@@ -14,6 +14,8 @@ export function MeetingStatusPanel({
 	archivedAt,
 	name,
 	nameLockedByUser,
+	importStreamSegmentCount,
+	importStreamFinished,
 	onSetName,
 	onStartDemo,
 	onStartLive,
@@ -33,6 +35,8 @@ export function MeetingStatusPanel({
 	archivedAt: number | null;
 	name: string | null;
 	nameLockedByUser: boolean;
+	importStreamSegmentCount: number;
+	importStreamFinished: boolean;
 	onSetName: (name: string) => void;
 	onStartDemo: () => void;
 	onStartLive: () => void;
@@ -121,6 +125,13 @@ export function MeetingStatusPanel({
 			{isArchived && archivedLabel && (
 				<div className="text-[11px] text-muted-foreground">
 					Archived — {archivedLabel}
+				</div>
+			)}
+			{mode === "import" && !importStreamFinished && !isArchived && (
+				<div className="flex items-center gap-1.5 text-[11px] text-amber-700 dark:text-amber-300">
+					<span className="size-1.5 animate-pulse rounded-full bg-amber-500" />
+					Whisper transcribing… ({importStreamSegmentCount} segment
+					{importStreamSegmentCount === 1 ? "" : "s"})
 				</div>
 			)}
 			<div className="text-muted-foreground">
