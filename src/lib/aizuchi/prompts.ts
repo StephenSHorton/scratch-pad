@@ -376,11 +376,83 @@ export function systemPromptFor(mode: ExtractionMode | undefined): string {
 /** Backwards-compatible export — defaults to the attribution prompt. */
 export const SYSTEM_PROMPT = SYSTEM_PROMPT_ATTRIBUTION;
 
+/**
+ * AIZ-49 — finalization-pass system prompt. Fires once at the end of a
+ * meeting (live or import) with the *full* transcript and the
+ * post-streaming-batches graph. The model's job here is review and
+ * close-out, not extraction: catch what the per-batch passes missed,
+ * merge near-duplicates, flip resolved questions/blockers, and surface
+ * loose ends as explicit `risk` / `assumption` / `question` nodes.
+ *
+ * Mode-aware on the fly: if the input graph contains no `person` nodes,
+ * the prompt instructs the model to stay in substance mode (no person
+ * nodes, no person-anchored edges). Otherwise it can use the full
+ * vocabulary.
+ */
+export const FINALIZE_SYSTEM_PROMPT = `You are doing a **finalization pass** on a meeting that has just ended. The transcript is now complete and the graph reflects whatever the streaming-phase batches captured. Your job is to **review and complete**, not extract from a chunk.
+
+You receive:
+1. The **current graph state** — what the streaming passes built.
+2. The **previous thoughts** — your own running notes from the streaming passes.
+3. The **full transcript** — every utterance, start to finish, in order.
+
+You return a single \`GraphDiff\`. Same schema, same vocabulary as the streaming passes — but a different posture. There is no "next batch" coming after this.
+
+## What this pass is for
+
+1. **Catch cross-batch misses.** A name introduced early and a decision pinned to that name later may have failed to link because the late batch's recent-transcript window didn't reach back far enough. With the full transcript in front of you, find these and add them via \`add_nodes\` / \`add_edges\` / \`update_nodes\`.
+2. **Merge near-duplicates.** Two nodes with similar labels covering the same concept ("postgres migration" + "pg migration", "bug in login" + "login bug") should be merged with \`merge_nodes\`. Prefer the more descriptive id as \`keep\`. Edges rewire automatically — do not re-emit them.
+3. **Flip resolved status.** Questions that got answered, blockers that got unblocked, risks that no longer apply — emit \`update_nodes\` with \`status: "resolved"\`. Don't remove the node; the resolved state is itself signal. Likewise, set \`status: "parked"\` for things explicitly set aside ("we'll come back to this").
+4. **Add a single summary node.** Emit one \`context\` node with id \`meeting_summary\`, label \`Meeting summary\`, and a 2–3 sentence \`description\` capturing the conversation's arc: the central topic, the main decisions or directions, anything still open. Connect it via \`related_to\` edges to the 2–4 most central nodes. If a \`meeting_summary\` already exists in the graph, \`update_nodes\` it instead.
+5. **Surface loose ends.** Anything the speakers raised but never resolved — uncertainties, "I'm assuming…", "we should check whether…", "the risk is…" — that the streaming passes didn't already capture. Use the schema vocabulary:
+   * **risk** for things that *might* go wrong ("if X then Y"). Set \`likelihood\` and \`impact\` when the framing supports it.
+   * **assumption** for things being taken for granted ("we're assuming X").
+   * **question** for genuinely open questions left at the end. Use \`status: "active"\`.
+   Don't fabricate. If the speakers didn't raise it, don't add it.
+
+## Vocabulary
+
+Same as the streaming prompt. Node types: \`person\`, \`topic\`, \`work_item\`, \`blocker\`, \`decision\`, \`action_item\`, \`question\`, \`context\`, \`risk\`, \`assumption\`, \`constraint\`, \`hypothesis\`, \`metric\`, \`artifact\`, \`event\`, \`sentiment\`. Edge relations: \`owns\`, \`depends_on\`, \`blocks\`, \`related_to\`, \`decides\`, \`asks\`, \`answers\`, \`mentions\`, \`assigned_to\`, \`causes\`, \`contradicts\`, \`supports\`, \`example_of\`, \`alternative_to\`, \`precedes\`, \`resolves\`, \`clarifies\`. Optional fields: \`status\` (\`active\` / \`resolved\` / \`parked\`), \`confidence\` (\`high\` / \`medium\` / \`low\`), \`quote\` (≤200 chars verbatim), \`tags\`, plus the type-specific structured fields (\`likelihood\`, \`impact\`, \`prediction\`, \`value\`, \`target\`, \`unit\`, \`occurredAt\`, \`limit\`, \`dueDate\`, \`tone\`, \`alternative\`).
+
+## Mode awareness
+
+If the input graph contains **no \`person\` nodes**, the upstream extraction was running in substance mode (single speaker / unattributed transcript). In that case:
+* **Don't introduce \`person\` nodes** in the finalize pass either — including for any "you" / "speaker" / "unknown" placeholders.
+* **Don't emit person-anchored edges** (\`owns\`, \`assigned_to\`, \`mentions\`, \`decides\`, \`asks\`).
+* The summary node still goes in; just connect it to content nodes, not people.
+
+If person nodes do exist, you're in attribution mode — use the full vocabulary including person edges.
+
+## Restraint
+
+* Don't restate what's already there with different wording — that's noise.
+* Don't pad. A small, accurate diff is better than a sprawling one.
+* If the streaming passes already captured the meeting well, the finalize pass might add only the summary node and a couple of resolved-status flips — that's fine.
+* \`no_changes: true\` is acceptable when the graph is genuinely complete *and* no summary is needed (rare; usually emit at least the summary node).
+
+## Stable ids
+
+snake_case slugs. Reuse existing ids — never re-add a node with a new id when an equivalent one already exists; merge or update.
+
+## Thoughts
+
+The \`notes\` array works the same way — emit new or changed thoughts only. After finalization, drop \`unresolved\` thoughts whose underlying loose ends you've now captured as nodes (set them to \`fyi\` and update text), and add at most one \`pattern\` thought if a cross-cutting theme is worth surfacing on the recap. Don't summarize the meeting in thoughts — that's what the summary node is for.
+
+## Output
+
+A standard \`GraphDiff\`. \`no_changes: false\` in almost every case. The downstream \`applyDiff\` path is the same one the streaming passes use — there is no separate finalize-only diff format.`;
+
 export interface PromptInput {
 	currentGraphJson: string;
 	previousThoughts: AIThought[];
 	recentTranscript: string;
 	chunkText: string;
+}
+
+export interface FinalizePromptInput {
+	currentGraphJson: string;
+	previousThoughts: AIThought[];
+	fullTranscript: string;
 }
 
 export function buildUserPrompt(input: PromptInput): string {
@@ -415,4 +487,31 @@ ${input.chunkText}
 \`\`\`
 
 Return the GraphDiff. Update the graph and your thoughts based on the new chunk, using the recent transcript and previous thoughts for context. Be willing to restructure — \`remove_nodes\` and \`remove_edges\` are available when something needs reclassification. Only return \`no_changes: true\` if the new chunk and surrounding context genuinely add nothing.`;
+}
+
+export function buildFinalizeUserPrompt(input: FinalizePromptInput): string {
+	const thoughtsBlock =
+		input.previousThoughts.length === 0
+			? "(none)"
+			: JSON.stringify(input.previousThoughts, null, 2);
+	const transcriptBlock = input.fullTranscript.trim() || "(empty)";
+	return `## Current graph state (post streaming-batches)
+
+\`\`\`json
+${input.currentGraphJson}
+\`\`\`
+
+## Previous thoughts
+
+\`\`\`json
+${thoughtsBlock}
+\`\`\`
+
+## Full transcript
+
+\`\`\`
+${transcriptBlock}
+\`\`\`
+
+The transcript is complete — there is no further input coming. Review the graph against the full transcript and emit a finalize \`GraphDiff\`: catch cross-batch misses, merge near-duplicates, flip resolved status on questions/blockers/risks the conversation closed out, add a single \`meeting_summary\` context node connected to the most central nodes, and surface real loose ends as \`risk\` / \`assumption\` / \`question\` nodes. Don't fabricate; only encode what the speakers actually raised.`;
 }
