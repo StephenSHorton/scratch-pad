@@ -185,16 +185,20 @@ function CameraFollower({
 		previousIdsRef.current = highlightIds;
 		if (newlyTouched.length === 0) return;
 
-		// Debounce so several add_nodes in one pass don't trigger several
-		// successive camera moves — ReactFlow's fitView animates over time.
+		// Wait for the d3-force simulation to settle before pointing the
+		// camera at the new nodes — they're actively moving for ~1.5–2s
+		// after a graph change, so an early fitView ends up framing
+		// where the nodes WERE, not where they end up. The padding +
+		// maxZoom keep the framing pulled back so a single new node
+		// doesn't yank the user into a 100% zoom on a single card.
 		const handle = window.setTimeout(() => {
 			fitView({
 				nodes: newlyTouched.map((id) => ({ id })),
 				duration: 700,
-				padding: 0.4,
-				maxZoom: 1.2,
+				padding: 0.6,
+				maxZoom: 0.8,
 			});
-		}, 80);
+		}, 1800);
 		return () => window.clearTimeout(handle);
 	}, [highlightIds, fitView]);
 
@@ -206,7 +210,7 @@ function CameraFollower({
 		if (firstFitDoneRef.current) return;
 		if (graphNodeCount === 0) return;
 		firstFitDoneRef.current = true;
-		fitView({ duration: 400, padding: 0.3 });
+		fitView({ duration: 400, padding: 0.3, maxZoom: 0.8 });
 	}, [graphNodeCount, fitView]);
 
 	return null;

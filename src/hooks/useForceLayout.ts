@@ -148,8 +148,8 @@ export function useForceLayout(graph: Graph): PositionMap {
 		if (!simRef.current) {
 			simRef.current = forceSimulation<SimNode, SimLink>(simNodes)
 				.force("link", link)
-				.force("charge", forceManyBody<SimNode>().strength(-1400))
-				.force("center", forceCenter(0, 0).strength(0.12))
+				.force("charge", forceManyBody<SimNode>().strength(-800))
+				.force("center", forceCenter(0, 0).strength(0.18))
 				.force("collide", forceCollide<SimNode>(COLLISION_RADIUS).strength(0.9))
 				.alphaDecay(0.05)
 				.alphaMin(0.002)
