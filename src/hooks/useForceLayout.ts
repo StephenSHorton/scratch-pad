@@ -317,6 +317,13 @@ export function useForceLayout(
 		previousSelectedRef.current = focused;
 		const alphaBump = focusChanged ? 0.85 : 0.6;
 
+		// Per-tick velocity damping. d3's default is 0.4; we run heavier so
+		// node motion feels more deliberate. Reapplied on every update so
+		// HMR-driven tweaks to this number take effect on the existing
+		// simulation instance (otherwise the value would only land on a
+		// fresh page load).
+		const VELOCITY_DECAY = 0.85;
+
 		if (!simRef.current) {
 			simRef.current = forceSimulation<SimNode, SimLink>(simNodes)
 				.force("link", link)
@@ -324,6 +331,7 @@ export function useForceLayout(
 				.force("radial", radial)
 				.force("collide", forceCollide<SimNode>(COLLISION_RADIUS).strength(0.9))
 				.alphaDecay(0.05)
+				.velocityDecay(VELOCITY_DECAY)
 				.alphaMin(0.002)
 				.on("tick", () => {
 					// Read from the ref, not the closure — `simNodes` here
@@ -348,7 +356,7 @@ export function useForceLayout(
 			// Reattach (or clear) the radial force. Passing `null` removes it,
 			// which is what focus mode wants.
 			simRef.current.force("radial", radial);
-			simRef.current.alpha(alphaBump).restart();
+			simRef.current.velocityDecay(VELOCITY_DECAY).alpha(alphaBump).restart();
 		}
 	}, [graph, selectedId]);
 
