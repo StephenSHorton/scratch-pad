@@ -23,6 +23,7 @@ import { MeetingOutline } from "@/components/aizuchi/MeetingOutline";
 import { MeetingStatusPanel } from "@/components/aizuchi/MeetingStatusPanel";
 import { useCommandPaletteHotkey } from "@/hooks/useCommandPaletteHotkey";
 import { type PositionMap, useForceLayout } from "@/hooks/useForceLayout";
+import { useMeetingDebugSnapshot } from "@/hooks/useMeetingDebugSnapshot";
 import { useMeetingSession } from "@/hooks/useMeetingSession";
 import type { ExtractionMode, MeetingSource } from "@/lib/aizuchi/persistence";
 import type {
@@ -422,6 +423,16 @@ function MeetingPrototype() {
 			layoutGraph(session.graph, session.highlightIds, selectedId, positions),
 		[session.graph, session.highlightIds, selectedId, positions],
 	);
+
+	useMeetingDebugSnapshot({
+		id,
+		name: session.name ?? undefined,
+		status: session.status,
+		mode: session.mode === "idle" ? undefined : session.mode,
+		graph: session.graph,
+		positions,
+		highlightIds: session.highlightIds,
+	});
 
 	const onNodeClick = useCallback((_e: React.MouseEvent, node: RFNode) => {
 		setSelectedId((current) => (current === node.id ? null : node.id));

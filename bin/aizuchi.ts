@@ -202,6 +202,93 @@ function isoOrEmpty(epochMs: number): string {
 	}
 }
 
+interface InspectSnapshot {
+	id: string;
+	name: string | null;
+	status: string;
+	mode: string | null;
+	updatedAt: string;
+	graph: {
+		nodes: Array<{
+			id: string;
+			label: string;
+			type: string;
+			[key: string]: unknown;
+		}>;
+		edges: Array<{
+			id: string;
+			from: string;
+			to: string;
+			relation: string;
+		}>;
+	};
+	positions: Record<string, [number, number]>;
+	highlightIds: string[];
+}
+
+/**
+ * AIZ-12 — pretty-print the live debug snapshot for terminal viewing.
+ * Used by `aizuchi meeting inspect`. The JSON form is what tools and
+ * agents consume; this rendering is for humans reading the terminal.
+ */
+function renderInspectSummary(snap: InspectSnapshot): string {
+	const out: string[] = [];
+	const heading = snap.name ? `${snap.name} (${snap.id})` : snap.id;
+	out.push(`${bold("Meeting:")} ${heading}`);
+	out.push(
+		`${bold("Status:")}  ${snap.status}${snap.mode ? `  ${dim(`mode=${snap.mode}`)}` : ""}`,
+	);
+	out.push(`${bold("Updated:")} ${snap.updatedAt}`);
+	out.push(
+		`${bold("Counts:")}  ${snap.graph.nodes.length} node(s), ${snap.graph.edges.length} edge(s), ${Object.keys(snap.positions).length} positioned`,
+	);
+
+	if (snap.graph.nodes.length === 0) {
+		out.push("");
+		out.push(dim("(empty graph — gemma hasn't produced anything yet)"));
+		return `${out.join("\n")}\n`;
+	}
+
+	// Group node summaries by type so the listing reads thematically.
+	const byType = new Map<string, typeof snap.graph.nodes>();
+	for (const n of snap.graph.nodes) {
+		const arr = byType.get(n.type) ?? [];
+		arr.push(n);
+		byType.set(n.type, arr);
+	}
+
+	out.push("");
+	out.push(bold("Nodes"));
+	for (const [type, nodes] of [...byType.entries()].sort((a, b) =>
+		a[0].localeCompare(b[0]),
+	)) {
+		out.push(`  ${dim(`[${type}]`)} ${nodes.length}`);
+		for (const n of nodes) {
+			const pos = snap.positions[n.id];
+			const posStr = pos
+				? dim(`(${pos[0]}, ${pos[1]})`)
+				: dim("(unpositioned)");
+			out.push(`    ${n.id}  "${n.label}"  ${posStr}`);
+		}
+	}
+
+	if (snap.graph.edges.length > 0) {
+		out.push("");
+		out.push(bold("Edges"));
+		for (const e of snap.graph.edges) {
+			out.push(`  ${e.from} ${dim(`--${e.relation}-->`)} ${e.to}`);
+		}
+	}
+
+	if (snap.highlightIds.length > 0) {
+		out.push("");
+		out.push(bold("Recently touched by AI:"));
+		out.push(`  ${snap.highlightIds.join(", ")}`);
+	}
+
+	return `${out.join("\n")}\n`;
+}
+
 // ---------------------------------------------------------------------------
 // Stdin helpers
 // ---------------------------------------------------------------------------
@@ -484,7 +571,7 @@ cli
 cli
 	.command(
 		"meeting <subcommand> [id] [arg]",
-		"Manage meetings (start|stop|ls|open|resume|rm|rename|import)",
+		"Manage meetings (start|stop|ls|open|resume|rm|rename|import|inspect)",
 	)
 	.option("--mode <mode>", "live or demo", { default: "live" })
 	.option("--force", "Reserved for symmetry with `pad rm` (currently no-op)")
@@ -508,13 +595,48 @@ cli
 				"rm",
 				"rename",
 				"import",
+				"inspect",
 			]);
 			if (!known.has(subcommand)) {
 				process.stderr.write(
-					`aizuchi: unknown meeting subcommand '${subcommand}'. Try: start, stop, ls, open, resume, rm, rename, import.\n`,
+					`aizuchi: unknown meeting subcommand '${subcommand}'. Try: start, stop, ls, open, resume, rm, rename, import, inspect.\n`,
 				);
 				process.exit(2);
 			}
+
+			// `meeting inspect` reads the live debug file the meeting
+			// window writes to ~/.aizuchi/debug/current-meeting.json. It
+			// doesn't go through the IPC server — the file is the
+			// channel — so we don't need the app to be reachable on a
+			// localhost port, only running enough to write the file.
+			if (subcommand === "inspect") {
+				const debugPath = path.join(
+					os.homedir(),
+					".aizuchi",
+					"debug",
+					"current-meeting.json",
+				);
+				let raw: string;
+				try {
+					raw = await fs.readFile(debugPath, "utf-8");
+				} catch (err) {
+					if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+						process.stderr.write(
+							"aizuchi: no live meeting found. Open a meeting window in the app first.\n",
+						);
+						process.exit(1);
+					}
+					throw err;
+				}
+				if (flags.json) {
+					process.stdout.write(`${raw.trimEnd()}\n`);
+					return;
+				}
+				const snap = JSON.parse(raw);
+				process.stdout.write(renderInspectSummary(snap));
+				return;
+			}
+
 			const requiresId: Record<string, true> = {
 				stop: true,
 				open: true,
