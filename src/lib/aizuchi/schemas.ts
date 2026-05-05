@@ -9,6 +9,15 @@ export const NodeType = z.enum([
 	"action_item",
 	"question",
 	"context",
+	// AIZ-12 — richer vocabulary
+	"risk",
+	"assumption",
+	"constraint",
+	"hypothesis",
+	"metric",
+	"artifact",
+	"event",
+	"sentiment",
 ]);
 export type NodeType = z.infer<typeof NodeType>;
 
@@ -22,8 +31,23 @@ export const EdgeRelation = z.enum([
 	"answers",
 	"mentions",
 	"assigned_to",
+	// AIZ-12 — richer vocabulary
+	"causes",
+	"contradicts",
+	"supports",
+	"example_of",
+	"alternative_to",
+	"precedes",
+	"resolves",
+	"clarifies",
 ]);
 export type EdgeRelation = z.infer<typeof EdgeRelation>;
+
+export const NodeStatus = z.enum(["active", "resolved", "parked"]);
+export type NodeStatus = z.infer<typeof NodeStatus>;
+
+export const NodeConfidence = z.enum(["high", "medium", "low"]);
+export type NodeConfidence = z.infer<typeof NodeConfidence>;
 
 export const Node = z.object({
 	id: z
@@ -41,6 +65,25 @@ export const Node = z.object({
 		.string()
 		.optional()
 		.describe("Who introduced or owns this in the meeting, if attributable."),
+	status: NodeStatus.optional().describe(
+		"Does this still need attention? 'active' (default), 'resolved' (answered/unblocked), 'parked' (set aside).",
+	),
+	confidence: NodeConfidence.optional().describe(
+		"How sure you are about this extraction. Default 'high'; use 'medium'/'low' when the speaker is hedging or you're inferring.",
+	),
+	quote: z
+		.string()
+		.max(200)
+		.optional()
+		.describe(
+			"Verbatim transcript snippet (≤200 chars) that grounded this node. Use the speaker's actual words, not a paraphrase.",
+		),
+	tags: z
+		.array(z.string())
+		.optional()
+		.describe(
+			"Free-form labels — lowercase, single words or hyphenated. Invent as needed (e.g. 'security', 'q3', 'customer-driven').",
+		),
 });
 export type Node = z.infer<typeof Node>;
 
@@ -66,6 +109,10 @@ export const NodeUpdate = z.object({
 	label: z.string().optional(),
 	description: z.string().optional(),
 	type: NodeType.optional(),
+	status: NodeStatus.optional(),
+	confidence: NodeConfidence.optional(),
+	quote: z.string().max(200).optional(),
+	tags: z.array(z.string()).optional(),
 });
 export type NodeUpdate = z.infer<typeof NodeUpdate>;
 
@@ -147,7 +194,9 @@ export const GraphDiff = z.object({
 		),
 	remove_edges: z
 		.array(z.string())
-		.describe("Edge ids to drop. Use when an earlier relation no longer holds."),
+		.describe(
+			"Edge ids to drop. Use when an earlier relation no longer holds.",
+		),
 	notes: z
 		.array(AIThought)
 		.describe(
@@ -212,6 +261,10 @@ export function applyDiff(graph: Graph, diff: GraphDiff): Graph {
 			...(u.label !== undefined && { label: u.label }),
 			...(u.description !== undefined && { description: u.description }),
 			...(u.type !== undefined && { type: u.type }),
+			...(u.status !== undefined && { status: u.status }),
+			...(u.confidence !== undefined && { confidence: u.confidence }),
+			...(u.quote !== undefined && { quote: u.quote }),
+			...(u.tags !== undefined && { tags: u.tags }),
 		});
 	}
 

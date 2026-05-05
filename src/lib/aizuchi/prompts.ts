@@ -36,6 +36,14 @@ You return a structured diff that **adds, updates, merges, or removes** nodes an
 - **action_item** — a specific commitment by a named owner to do a concrete thing afterwards. Always emit an \`assigned_to\` edge to the owner. Examples: "Priya: I'll write up a one-pager on the badge UX." → action_item, assigned_to Priya. "Travis, can you review the PR?" → action_item, assigned_to Travis. Aspirational meta-commentary like "we should track these in Linear" or "the commitment to create tasks" is **not** an action_item — drop it or surface as a thought.
 - **question** — an open question raised but not answered.
 - **context** — background info / status / prior state.
+- **risk** — something that *might* go wrong ("if X then Y"). Distinct from \`blocker\` (already happening) and \`assumption\` (taken for granted).
+- **assumption** — something being taken for granted, often the source of later blockers ("we're assuming X").
+- **constraint** — a hard limit: budget, deadline, policy, technical ceiling. Decisions are made *under* constraints.
+- **hypothesis** — a proposal being tested or floated ("what if we…", "I think X would…").
+- **metric** — a number/KPI/target being discussed (e.g. "p95 < 200ms", "30% MoM").
+- **artifact** — a concrete document, system, link, or code reference being mentioned (the badge spec, the staging DB).
+- **event** — something that happened or will happen at a known time (the launch, last Tuesday's outage).
+- **sentiment** — emotional tone tied to a topic/person (frustrated, excited, uncertain). Use sparingly — only when the emotion is itself the signal, not a passing aside.
 
 ## Edge relations
 
@@ -47,6 +55,23 @@ You return a structured diff that **adds, updates, merges, or removes** nodes an
 - **asks / answers** — Q&A linkage
 - **mentions** — person refers to a topic they don't own (use sparingly)
 - **assigned_to** — action_item → person owner
+- **causes** — A causes B (use for risks → outcomes, events → consequences)
+- **contradicts** — A contradicts B (two decisions, claim vs. evidence, etc.)
+- **supports** — A reinforces B (evidence for a hypothesis, an example backing a claim)
+- **example_of** — A is a concrete instance of B
+- **alternative_to** — A is a competing option to B (use heavily when options are being weighed)
+- **precedes** — temporal ordering (A happens/happened before B; chain events)
+- **resolves** — A resolves B (decision resolves question, action_item resolves blocker, answer resolves risk)
+- **clarifies** — A clarifies B (a follow-up reframing an earlier point)
+
+## Status / confidence / quote / tags
+
+Optional fields on every node — use them when they add signal:
+
+- **status** — \`active\` (default, omit), \`resolved\` (a question got answered, a blocker got unblocked, a risk no longer applies), \`parked\` (set aside / "we'll come back to this"). Mark resolved by emitting an \`update_nodes\` entry; don't re-add the node.
+- **confidence** — \`high\` (default, omit), \`medium\` (speaker is hedging or you're inferring), \`low\` (you're guessing). Drop confidence to \`low\` rather than not extracting at all.
+- **quote** — a verbatim transcript snippet (≤200 chars) that grounded the node. Use the speaker's actual words, not a paraphrase. Strongest on \`decision\`, \`risk\`, \`assumption\`, \`hypothesis\`, \`metric\`, \`sentiment\`.
+- **tags** — free-form lowercase labels you invent (e.g. \`security\`, \`q3\`, \`customer-driven\`). Useful for cross-cutting themes that aren't worth their own node.
 
 ## Stable ids
 
@@ -186,6 +211,14 @@ This input has no reliable speaker attribution — every chunk is either unlabel
 - **action_item** — a specific commitment to do a concrete thing afterwards. No \`assigned_to\` edge — the speaker is implicit, so the bar is **higher** than attribution mode: there must be both a tangible artifact (a doc, a fix, a feature, a shipped change) AND something verifiable (a deadline, a named output, an unambiguous "ship X" / "write X" framing). Examples that qualify: "Ship the Postgres migration by Friday." / "Write a one-pager on the badge UX." Examples that **do not** qualify: "The commitment to create tasks in Linear to track updates." (meta-commentary) / "We should think about timing." (aspirational) / "Track these in Linear." (no named entries). When in doubt, demote — a missing action_item is fine; a vague one is noise. Demote: choices settled on → \`decision\`; loose ends → thought with intent \`unresolved\`; aspirational filler → emit nothing.
 - **question** — an open question raised but not answered.
 - **context** — background info / status / prior state.
+- **risk** — something that *might* go wrong ("if X then Y"). Distinct from \`blocker\` (already happening) and \`assumption\` (taken for granted).
+- **assumption** — something being taken for granted, often the seed of a later blocker ("we're assuming X").
+- **constraint** — a hard limit: budget, deadline, policy, technical ceiling.
+- **hypothesis** — a proposal being tested or floated ("what if we…", "I think X would…").
+- **metric** — a number/KPI/target being discussed (e.g. "p95 < 200ms", "30% MoM").
+- **artifact** — a concrete document, system, link, or code reference being mentioned.
+- **event** — something that happened or will happen at a known time.
+- **sentiment** — emotional tone tied to a topic. Use sparingly — only when the emotion is itself the signal.
 
 \`person\` is **excluded** in this mode.
 
@@ -195,8 +228,25 @@ This input has no reliable speaker attribution — every chunk is either unlabel
 - **blocks** — blocker blocks a work_item
 - **related_to** — generic association (use sparingly; prefer specific relations)
 - **answers** — for explicit Q→A linkage between content nodes
+- **causes** — A causes B
+- **contradicts** — A contradicts B
+- **supports** — A reinforces B (evidence for a hypothesis, etc.)
+- **example_of** — A is a concrete instance of B
+- **alternative_to** — A is a competing option to B
+- **precedes** — temporal ordering (A before B)
+- **resolves** — A resolves B (decision resolves question, action_item resolves blocker)
+- **clarifies** — A clarifies B (a follow-up that reframes an earlier point)
 
 \`owns\`, \`assigned_to\`, \`mentions\`, \`decides\`, \`asks\` are **excluded** because they require a person on one side.
+
+## Status / confidence / quote / tags
+
+Optional fields on every node — use them when they add signal:
+
+- **status** — \`active\` (default, omit), \`resolved\` (a question got answered, a blocker got unblocked, a risk no longer applies), \`parked\` (set aside). Mark resolved via \`update_nodes\`; don't re-add.
+- **confidence** — \`high\` (default, omit), \`medium\` (hedging / inferred), \`low\` (guessing). Prefer demoting confidence over dropping the node.
+- **quote** — verbatim transcript snippet (≤200 chars) that grounded the node. Strongest on \`decision\`, \`risk\`, \`assumption\`, \`hypothesis\`, \`metric\`, \`sentiment\`.
+- **tags** — free-form lowercase labels you invent (e.g. \`security\`, \`q3\`).
 
 ## Stable ids
 

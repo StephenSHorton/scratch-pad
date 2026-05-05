@@ -8,6 +8,15 @@ const SPECIFIC_RELATIONS: ReadonlySet<EdgeRelation> = new Set([
 	"decides",
 	"assigned_to",
 	"answers",
+	// AIZ-12 — richer vocabulary; all dominate `related_to` for the same pair.
+	"causes",
+	"contradicts",
+	"supports",
+	"example_of",
+	"alternative_to",
+	"precedes",
+	"resolves",
+	"clarifies",
 ]);
 
 /**

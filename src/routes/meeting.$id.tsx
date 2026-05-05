@@ -8,9 +8,9 @@ import {
 } from "@xyflow/react";
 import { useEffect, useMemo, useRef } from "react";
 import {
+	type PanelImperativeHandle,
 	Group as ResizeGroup,
 	Panel as ResizePanel,
-	type PanelImperativeHandle,
 	Separator as ResizeSeparator,
 } from "react-resizable-panels";
 import { Canvas } from "@/components/ai-elements/canvas";
@@ -40,9 +40,57 @@ const COLUMN_X: Record<NodeType, number> = {
 	blocker: 1900,
 	question: 2280,
 	context: 2660,
+	// AIZ-12 — richer vocabulary, grouped by affinity
+	risk: 3040,
+	assumption: 3420,
+	constraint: 3800,
+	hypothesis: 4180,
+	metric: 4560,
+	artifact: 4940,
+	event: 5320,
+	sentiment: 5700,
 };
 
 const ROW_HEIGHT = 160;
+// Approximate width of a rendered AizuchiNode card (matches `w-sm` in
+// ai-elements/node.tsx). Used by the position-aware handle picker so an
+// edge from column N to column N+1 chooses left/right handles, not
+// a diagonal across the gap.
+const NODE_WIDTH = 384;
+const NODE_HEIGHT = 120;
+
+type HandleSide = "left" | "right" | "top" | "bottom";
+
+/**
+ * AIZ-12 — pick which side of each node an edge should attach to so the
+ * rendered path takes the shortest geometric route. We compare the
+ * vector from source-center to target-center: whichever axis dominates
+ * decides the side. This avoids the "weird path" failure mode where an
+ * edge from a node on the right loops back around to the left handle.
+ */
+function pickHandles(
+	from: { x: number; y: number },
+	to: { x: number; y: number },
+): { sourceHandle: string; targetHandle: string } {
+	const fromCenter = {
+		x: from.x + NODE_WIDTH / 2,
+		y: from.y + NODE_HEIGHT / 2,
+	};
+	const toCenter = { x: to.x + NODE_WIDTH / 2, y: to.y + NODE_HEIGHT / 2 };
+	const dx = toCenter.x - fromCenter.x;
+	const dy = toCenter.y - fromCenter.y;
+
+	let sourceSide: HandleSide;
+	let targetSide: HandleSide;
+	if (Math.abs(dx) >= Math.abs(dy)) {
+		sourceSide = dx >= 0 ? "right" : "left";
+		targetSide = dx >= 0 ? "left" : "right";
+	} else {
+		sourceSide = dy >= 0 ? "bottom" : "top";
+		targetSide = dy >= 0 ? "top" : "bottom";
+	}
+	return { sourceHandle: `s-${sourceSide}`, targetHandle: `t-${targetSide}` };
+}
 
 // Drag the outline below this percentage and it snaps closed on release.
 const OUTLINE_COLLAPSE_THRESHOLD = 20;
@@ -52,25 +100,38 @@ function layoutGraph(
 	highlightIds: ReadonlySet<string>,
 ): { nodes: RFNode[]; edges: RFEdge[] } {
 	const counters: Partial<Record<NodeType, number>> = {};
+	const positions = new Map<string, { x: number; y: number }>();
 	const nodes: RFNode[] = graph.nodes.map((n) => {
 		const idx = counters[n.type] ?? 0;
 		counters[n.type] = idx + 1;
+		const position = { x: COLUMN_X[n.type], y: idx * ROW_HEIGHT };
+		positions.set(n.id, position);
 		return {
 			id: n.id,
 			type: "aizuchi",
-			position: { x: COLUMN_X[n.type], y: idx * ROW_HEIGHT },
+			position,
 			data: { node: n, highlighted: highlightIds.has(n.id) },
 		};
 	});
 
-	const edges: RFEdge[] = graph.edges.map((e) => ({
-		id: e.id,
-		source: e.from,
-		target: e.to,
-		type: "animated",
-		label: e.relation,
-		data: e,
-	}));
+	const edges: RFEdge[] = graph.edges.map((e) => {
+		const fromPos = positions.get(e.from);
+		const toPos = positions.get(e.to);
+		const handles =
+			fromPos && toPos
+				? pickHandles(fromPos, toPos)
+				: { sourceHandle: "s-right", targetHandle: "t-left" };
+		return {
+			id: e.id,
+			source: e.from,
+			target: e.to,
+			sourceHandle: handles.sourceHandle,
+			targetHandle: handles.targetHandle,
+			type: "animated",
+			label: e.relation,
+			data: e,
+		};
+	});
 
 	return { nodes, edges };
 }

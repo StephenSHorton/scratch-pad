@@ -7,9 +7,17 @@ const SECTION_ORDER: { type: NodeType; label: string }[] = [
 	{ type: "decision", label: "Decisions" },
 	{ type: "action_item", label: "Action items" },
 	{ type: "blocker", label: "Blockers" },
+	{ type: "risk", label: "Risks" },
+	{ type: "assumption", label: "Assumptions" },
+	{ type: "constraint", label: "Constraints" },
 	{ type: "question", label: "Questions" },
+	{ type: "hypothesis", label: "Hypotheses" },
+	{ type: "metric", label: "Metrics" },
+	{ type: "event", label: "Events" },
 	{ type: "work_item", label: "Work items" },
+	{ type: "artifact", label: "Artifacts" },
 	{ type: "topic", label: "Topics" },
+	{ type: "sentiment", label: "Sentiment" },
 	{ type: "context", label: "Context" },
 ];
 
