@@ -214,9 +214,11 @@ pub const MIN_MODEL_BYTES: u64 = 400_000_000;
 /// Downloads the model if it's not already at `path`. Blocking.
 /// Re-downloads when the existing file is suspiciously small (partial fetch
 /// from an earlier interrupted run). Convenience wrapper around
-/// `ensure_model_with_progress` for callers that don't care about progress.
+/// `ensure_model_with_progress` for callers that don't care about progress
+/// or cancellation.
 pub fn ensure_model(path: &Path, url: &str) -> Result<(), String> {
-    ensure_model_with_progress(path, url, |_, _| {})
+    let abort = AtomicBool::new(false);
+    ensure_model_with_progress(path, url, &abort, |_, _| {})
 }
 
 /// Like `ensure_model`, but invokes `on_progress(downloaded_bytes, total_bytes)`
@@ -225,9 +227,15 @@ pub fn ensure_model(path: &Path, url: &str) -> Result<(), String> {
 /// already present — callers should treat "no callbacks" as the no-op /
 /// cached-model path. AIZ-38 — see `audio_import.rs` for the
 /// `audio-import-phase` events the worker thread builds on top of these.
+///
+/// `abort` is checked between 64KB chunks. On cancel the function returns
+/// `Err("Model download cancelled")` and leaves a `*.bin.partial` next
+/// to `path` for the next run to overwrite (`File::create` truncates, so
+/// no cleanup is required).
 pub fn ensure_model_with_progress<F>(
     path: &Path,
     url: &str,
+    abort: &AtomicBool,
     mut on_progress: F,
 ) -> Result<(), String>
 where
@@ -288,6 +296,14 @@ where
     loop {
         use std::io::Read;
         use std::io::Write;
+        // Cancellation is checked once per 64KB chunk so a closing meeting
+        // window doesn't tie up the network for the rest of a 488MB stream.
+        // Leave the `.bin.partial` in place; the next run's `File::create`
+        // truncates it.
+        if abort.load(Ordering::Relaxed) {
+            drop(tmp);
+            return Err("Model download cancelled".into());
+        }
         let n = response
             .read(&mut buf)
             .map_err(|e| format!("Read from model stream failed: {e}"))?;

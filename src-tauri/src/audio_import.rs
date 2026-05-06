@@ -247,6 +247,7 @@ fn run_streaming_worker(
         let result = audio::ensure_model_with_progress(
             &model_path,
             audio::MODEL_URL,
+            &abort,
             move |bytes, total| {
                 let percent = total
                     .filter(|t| *t > 0)
@@ -277,6 +278,17 @@ fn run_streaming_worker(
             },
         );
         if let Err(message) = result {
+            // A cancellation mid-download surfaces as Err("Model download
+            // cancelled"); treat it the same way as a post-decode abort —
+            // no error event, just clean up and exit. Mirrors the
+            // `Err(_) if aborted =>` arm below for transcription.
+            if abort.load(Ordering::Relaxed) {
+                crate::log(&format!(
+                    "[audio-import] aborted during model download: {import_id}"
+                ));
+                cleanup_abort(&app, &import_id);
+                return;
+            }
             emit_error(&app, &import_id, &message);
             cleanup_abort(&app, &import_id);
             return;
