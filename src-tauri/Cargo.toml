@@ -49,8 +49,10 @@ symphonia = { version = "0.5", features = ["mp3", "aac", "alac", "flac", "isomp4
 opus-decoder = "0.1"
 # AIZ-38 — streaming HTTPS download for the whisper model so we can emit
 # byte-level progress (replaces a blocking `curl --progress-bar` shell-out
-# that hid all feedback during the ~5min first-run download).
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "stream"] }
+# that hid all feedback during the ~5min first-run download). Pinned to
+# 0.13 to share the version `tauri-plugin-updater` already pulls in,
+# avoiding two reqwest versions in the binary.
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls", "stream"] }
 
 # IPC server (AIZ-20)
 hyper = { version = "1", features = ["http1", "server"] }
