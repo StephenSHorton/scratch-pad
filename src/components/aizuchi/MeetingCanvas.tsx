@@ -210,6 +210,13 @@ interface MeetingCanvasProps {
 	settledAt: number;
 	onNodeClick?: (node: AzNode) => void;
 	onPaneClick?: () => void;
+	/**
+	 * AIZ-45 — fires on hover-changes over nodes. Argument is the hovered
+	 * node, or `null` when the pointer is outside any node. Used by the
+	 * event timeline strip to mirror canvas-side hover into chip
+	 * highlights. Optional; canvas drawing is unaffected.
+	 */
+	onNodeHover?: (node: AzNode | null) => void;
 	/** Overlay panels (status, transcript) rendered above the canvas. */
 	children?: ReactNode;
 }
@@ -233,6 +240,7 @@ export function MeetingCanvas({
 	settledAt,
 	onNodeClick,
 	onPaneClick,
+	onNodeHover,
 	children,
 }: MeetingCanvasProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -556,12 +564,42 @@ export function MeetingCanvas({
 		[onNodeClick, onPaneClick],
 	);
 
+	// AIZ-45 — track hovered node id for outbound onNodeHover, deduped so the
+	// caller doesn't see one event per pixel. Kept in a ref because the only
+	// consumer is the callback comparison; no re-render needed.
+	const hoveredNodeIdRef = useRef<string | null>(null);
+	const handleMouseMove = useCallback(
+		(e: React.MouseEvent<HTMLCanvasElement>) => {
+			if (!onNodeHover) return;
+			const canvas = canvasRef.current;
+			if (!canvas) return;
+			const rect = canvas.getBoundingClientRect();
+			const cssX = e.clientX - rect.left;
+			const cssY = e.clientY - rect.top;
+			const [worldX, worldY] = transformRef.current.invert([cssX, cssY]);
+			const node = hitTestNode(drawStateRef.current, worldX, worldY);
+			const nextId = node?.id ?? null;
+			if (nextId === hoveredNodeIdRef.current) return;
+			hoveredNodeIdRef.current = nextId;
+			onNodeHover(node);
+		},
+		[onNodeHover],
+	);
+	const handleMouseLeave = useCallback(() => {
+		if (!onNodeHover) return;
+		if (hoveredNodeIdRef.current === null) return;
+		hoveredNodeIdRef.current = null;
+		onNodeHover(null);
+	}, [onNodeHover]);
+
 	return (
 		<div ref={containerRef} className="relative h-full w-full bg-sidebar">
 			<canvas
 				ref={canvasRef}
 				className="absolute inset-0"
 				onClick={handleClick}
+				onMouseMove={handleMouseMove}
+				onMouseLeave={handleMouseLeave}
 			/>
 			<section aria-label="Meeting graph" className="sr-only">
 				<ul>
