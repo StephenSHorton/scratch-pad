@@ -175,18 +175,36 @@ pub struct TranscriptSegment {
     pub text: String,
     pub start_ms: i64,
     pub end_ms: i64,
-    /// Cycling label like "Speaker A", "Speaker B" derived from
-    /// tinydiarize's speaker-turn predictions. The tdrz model only knows
-    /// "did the speaker just change" — it does not identify *who* — so
-    /// labels alternate but don't persist identity across windows.
+    /// AIZ-14: always `"Speaker A"` for now. tinydiarize predicts a
+    /// per-segment "did the speaker just change" boolean, but it has no
+    /// concept of speaker identity (no embeddings) and its turn flag is
+    /// high-recall / low-precision — pauses, breaths, and filler tokens
+    /// trigger spurious turn predictions. Honouring those flags
+    /// monotonically increments a label index, so a single solo speaker
+    /// fragments into Speaker A → B → C across a long meeting. We
+    /// disable label cycling until a real embedding-based diarizer
+    /// lands; downstream extraction runs in Substance mode for live
+    /// (and already does for audio import).
     pub speaker: String,
 }
 
-/// Format a 0-based speaker index as "Speaker A", "Speaker B", … "Speaker Z",
-/// "Speaker AA", etc. Wraps around at 26 by default for the prototype.
-fn speaker_label(idx: usize) -> String {
-    let letter = char::from(b'A' + (idx % 26) as u8);
-    format!("Speaker {letter}")
+/// Constant speaker label used by every segment until a real diarizer
+/// replaces tinydiarize. See `TranscriptSegment::speaker` for context.
+const SPEAKER_LABEL: &str = "Speaker A";
+
+/// `[whisper] AIZ_DIARIZE_DEBUG=1` enables stderr logging of tdrz
+/// turn-flag observations. The flag is still produced by the model —
+/// we just no longer use it to drive labels — and capturing it for
+/// future analysis is cheap. Read once per process to avoid the syscall
+/// inside the inference hot loop.
+fn diarize_debug_enabled() -> bool {
+    use std::sync::OnceLock;
+    static FLAG: OnceLock<bool> = OnceLock::new();
+    *FLAG.get_or_init(|| {
+        std::env::var("AIZ_DIARIZE_DEBUG")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    })
 }
 
 /// Minimum size we'll accept as a complete model. small.en-tdrz is ~488MB;
@@ -381,7 +399,7 @@ where
             text,
             start_ms: data.start_timestamp * 10,
             end_ms: data.end_timestamp * 10,
-            speaker: speaker_label(0),
+            speaker: SPEAKER_LABEL.to_string(),
         });
     });
 
@@ -458,7 +476,8 @@ fn transcribe_samples(
 
     let n = state.full_n_segments();
     let mut segments = Vec::with_capacity(n as usize);
-    let mut speaker_idx: usize = 0;
+    let debug = diarize_debug_enabled();
+    let mut turn_count = 0usize;
     for i in 0..n {
         let segment = state
             .get_segment(i)
@@ -469,18 +488,25 @@ fn transcribe_samples(
             .to_string();
         let t0 = segment.start_timestamp();
         let t1 = segment.end_timestamp();
-        let turn_next = segment.next_segment_speaker_turn();
-        let speaker = speaker_label(speaker_idx);
+        // AIZ-14: tdrz still emits a turn flag, but we no longer let it
+        // drive labels — see `TranscriptSegment::speaker`. Surface the
+        // raw flags under a debug env var so we can profile precision
+        // when wiring up a proper diarizer.
+        if debug && segment.next_segment_speaker_turn() {
+            turn_count += 1;
+        }
         // whisper.cpp returns timestamps in 10ms units
         segments.push(TranscriptSegment {
             text: text.trim().to_string(),
             start_ms: t0 * 10,
             end_ms: t1 * 10,
-            speaker,
+            speaker: SPEAKER_LABEL.to_string(),
         });
-        if turn_next {
-            speaker_idx = speaker_idx.wrapping_add(1);
-        }
+    }
+    if debug {
+        eprintln!(
+            "[whisper] transcribe_samples: {n} segments, tdrz turns observed: {turn_count} (ignored, AIZ-14)"
+        );
     }
     Ok(segments)
 }
@@ -963,12 +989,14 @@ where
         let mut next_start = 0usize;
         // Track absolute meeting time for emitted timestamps
         let session_start = std::time::Instant::now();
-        // tdrz produces a speaker_turn_next flag between successive segments
-        // *within a single inference call*. Across window boundaries we have
-        // no signal, so we just continue the current label — the next within-
-        // window turn will resync. This loses speaker changes that happen
-        // exactly at a boundary but is the simplest sound default.
-        let mut speaker_idx: usize = 0;
+        // AIZ-14: tdrz's speaker-turn flag is high-recall / low-precision
+        // and over-segments a single human speaker into several "Speaker
+        // X" labels across a long meeting (pauses, breaths, fillers all
+        // trigger it). We keep tdrz enabled for parity with the offline
+        // path but emit a constant label per segment until a real
+        // embedding-based diarizer lands. The flag is still observable
+        // and is logged under `AIZ_DIARIZE_DEBUG=1` for future analysis.
+        let debug = diarize_debug_enabled();
 
         while !trans_stop.load(Ordering::Relaxed) {
             let buf_len = trans_buf.lock().map(|b| b.len()).unwrap_or(0);
@@ -1019,14 +1047,10 @@ where
                     Ok(t) => t.trim().to_string(),
                     Err(_) => continue,
                 };
-                let turn_next = segment.next_segment_speaker_turn();
-                if turn_next {
+                if debug && segment.next_segment_speaker_turn() {
                     window_turns += 1;
                 }
                 if text.is_empty() {
-                    if turn_next {
-                        speaker_idx = speaker_idx.wrapping_add(1);
-                    }
                     continue;
                 }
                 let t0 = segment.start_timestamp() * 10;
@@ -1035,15 +1059,14 @@ where
                     text,
                     start_ms: window_offset_ms + t0,
                     end_ms: window_offset_ms + t1,
-                    speaker: speaker_label(speaker_idx),
+                    speaker: SPEAKER_LABEL.to_string(),
                 });
-                if turn_next {
-                    speaker_idx = speaker_idx.wrapping_add(1);
-                }
             }
-            eprintln!(
-                "[live-transcribe] window: {n} segments, {window_turns} turn(s), speaker_idx={speaker_idx}"
-            );
+            if debug {
+                eprintln!(
+                    "[live-transcribe] window: {n} segments, {window_turns} tdrz turn(s) observed (ignored, AIZ-14)"
+                );
+            }
             // Bound buffer growth: trim everything before the next window's start
             let drop_before = next_start.saturating_add(advance_samples);
             if let Ok(mut b) = trans_buf.lock() {
