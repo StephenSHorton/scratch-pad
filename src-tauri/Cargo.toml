@@ -47,6 +47,10 @@ symphonia = { version = "0.5", features = ["mp3", "aac", "alac", "flac", "isomp4
 # unsafe). Used for `.webm`/`.mkv` audio tracks where symphonia hands us
 # Opus packets but cannot decode them.
 opus-decoder = "0.1"
+# AIZ-38 — streaming HTTPS download for the whisper model so we can emit
+# byte-level progress (replaces a blocking `curl --progress-bar` shell-out
+# that hid all feedback during the ~5min first-run download).
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "stream"] }
 
 # IPC server (AIZ-20)
 hyper = { version = "1", features = ["http1", "server"] }

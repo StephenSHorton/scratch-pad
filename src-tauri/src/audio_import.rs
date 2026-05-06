@@ -81,6 +81,34 @@ pub struct AudioImportErrorPayload {
     pub message: String,
 }
 
+/// AIZ-38 — named-phase progress event for the meeting status panel.
+/// Phase IDs are stable strings the frontend matches against:
+/// - `downloading-model` — first-run only; `bytes` / `total` populated.
+///   `total` may be `None` for servers that omit `Content-Length`.
+/// - `decoding` — symphonia/hound is converting the file to mono 16k f32.
+///   No progress; the file is read end-to-end before whisper starts.
+/// - `transcribing` — whisper inference. `percent` mirrors the existing
+///   `audio-import-progress` event so the pill can pick whichever it
+///   prefers; we keep both for backwards compatibility.
+/// - `staging` — final hand-off; the meeting window is about to flip
+///   from "transcribing" to "thinking" as the last batch lands.
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AudioImportPhasePayload {
+    pub import_id: String,
+    pub phase: &'static str,
+    /// Human-readable label for the status pill. Backend-owned so we can
+    /// tweak copy without a frontend redeploy.
+    pub label: String,
+    /// Bytes downloaded so far (only set during `downloading-model`).
+    pub bytes: Option<u64>,
+    /// Total bytes (only set during `downloading-model`, and only when
+    /// the server sent `Content-Length`).
+    pub total: Option<u64>,
+    /// 0..=100 for `transcribing`; `None` otherwise.
+    pub percent: Option<i32>,
+}
+
 /// AIZ-47 — public envelope returned by `start_streaming_audio_import`.
 /// Mirrors the shape `StagedImport` had pre-streaming so callers
 /// (Tauri command + IPC handler) keep the same response contract.
@@ -124,11 +152,14 @@ pub fn start_streaming_audio_import(
         audio_path.display(),
         model_path.display()
     ));
-    // Pre-flight the model download synchronously so a missing model
-    // fails fast (visible to the caller as a normal error) rather than
-    // being swallowed by the worker thread on the way to an
-    // `audio-import-error` event.
-    audio::ensure_model(&model_path, audio::MODEL_URL)?;
+    // AIZ-38 — model download is no longer pre-flighted on the IPC
+    // thread. The 488MB first-run download blocked the palette for ~5min
+    // with no UI feedback; we now stage immediately, open the meeting
+    // window, and let the worker thread emit `audio-import-phase` events
+    // (`downloading-model` → `decoding` → `transcribing` → `staging`)
+    // that the status panel renders into a real progress bar. Any
+    // download failure surfaces through `audio-import-error` exactly
+    // like a whisper inference error already does.
 
     // AIZ-14 resolution: tinydiarize cannot identify speakers (no
     // embeddings) — its turn-flag is too noisy to drive labels. Both
@@ -175,7 +206,11 @@ pub fn start_streaming_audio_import(
 
 /// Drives the whisper worker thread. Emits per-segment events as
 /// inference produces them; emits a terminal `audio-import-done` or
-/// `audio-import-error` event when finished.
+/// `audio-import-error` event when finished. AIZ-38 — also emits
+/// `audio-import-phase` events at each stage (`downloading-model`,
+/// `decoding`, `transcribing`, `staging`) so the meeting window's
+/// status pill can render real progress instead of a single
+/// "Transcribing…" message that blocks for 5+ minutes on first run.
 fn run_streaming_worker(
     app: AppHandle,
     import_id: String,
@@ -183,6 +218,86 @@ fn run_streaming_worker(
     model_path: PathBuf,
     abort: Arc<AtomicBool>,
 ) {
+    // AIZ-38 — download the model on the worker thread so the IPC handler
+    // can return immediately. Skip the `downloading-model` phase event
+    // when the file already exists at the expected size; `ensure_model`
+    // returns instantly in that case. We mirror the cached-file check
+    // here purely so we can avoid emitting a misleading "Downloading
+    // model…" event when we'll never download anything.
+    let model_already_present = matches!(
+        std::fs::metadata(&model_path),
+        Ok(meta) if meta.len() >= audio::MIN_MODEL_BYTES
+    );
+    if !model_already_present {
+        emit_phase(
+            &app,
+            &import_id,
+            "downloading-model",
+            "Downloading whisper model (first run, ~488MB)…",
+            Some(0),
+            None,
+            None,
+        );
+        let phase_app = app.clone();
+        let phase_id = import_id.clone();
+        // Throttle: integer-percent change OR ~1MB downloaded since last
+        // tick. Without throttling we'd fire ~7500 events on a 488MB
+        // download (one per 64KB chunk).
+        let last_emit = Arc::new(Mutex::new((0u64, -1i32)));
+        let result = audio::ensure_model_with_progress(
+            &model_path,
+            audio::MODEL_URL,
+            move |bytes, total| {
+                let percent = total
+                    .filter(|t| *t > 0)
+                    .map(|t| ((bytes.saturating_mul(100)) / t).min(100) as i32);
+                if let Ok(mut last) = last_emit.lock() {
+                    let percent_changed = match percent {
+                        Some(p) => p > last.1,
+                        None => false,
+                    };
+                    let bytes_changed = bytes >= last.0.saturating_add(1_000_000);
+                    if !percent_changed && !bytes_changed {
+                        return;
+                    }
+                    last.0 = bytes;
+                    if let Some(p) = percent {
+                        last.1 = p;
+                    }
+                }
+                emit_phase(
+                    &phase_app,
+                    &phase_id,
+                    "downloading-model",
+                    "Downloading whisper model (first run, ~488MB)…",
+                    Some(bytes),
+                    total,
+                    percent,
+                );
+            },
+        );
+        if let Err(message) = result {
+            emit_error(&app, &import_id, &message);
+            cleanup_abort(&app, &import_id);
+            return;
+        }
+    }
+
+    if abort.load(Ordering::Relaxed) {
+        cleanup_abort(&app, &import_id);
+        return;
+    }
+
+    emit_phase(
+        &app,
+        &import_id,
+        "decoding",
+        "Decoding audio…",
+        None,
+        None,
+        None,
+    );
+
     let segment_count = Arc::new(Mutex::new(0usize));
 
     let emit_app = app.clone();
@@ -215,18 +330,35 @@ fn run_streaming_worker(
     // during inference). The frontend cares about visible deltas, so we
     // only emit a Tauri event when the integer percent advances. This
     // also keeps the IPC channel from drowning in noise when the model
-    // is hot.
+    // is hot. AIZ-38 — also fold the first observed percent into a
+    // `transcribing` phase event so the status pill flips off
+    // "decoding" the moment whisper starts producing.
     let prog_app = app.clone();
     let prog_id = import_id.clone();
     let last_percent = Arc::new(Mutex::new(-1i32));
+    let phase_app_for_prog = app.clone();
+    let phase_id_for_prog = import_id.clone();
     let on_progress = move |percent: i32| {
-        if let Ok(mut last) = last_percent.lock() {
+        let prev = if let Ok(mut last) = last_percent.lock() {
             if percent <= *last {
                 return;
             }
+            let prev = *last;
             *last = percent;
+            prev
         } else {
             return;
+        };
+        if prev < 0 {
+            emit_phase(
+                &phase_app_for_prog,
+                &phase_id_for_prog,
+                "transcribing",
+                "Transcribing…",
+                None,
+                None,
+                Some(percent),
+            );
         }
         if let Err(e) = prog_app.emit(
             "audio-import-progress",
@@ -251,11 +383,7 @@ fn run_streaming_worker(
 
     // Drop the abort registration regardless of how we got here so a
     // late `cancel_audio_import` doesn't try to flip a stale flag.
-    if let Some(state) = app.try_state::<AudioImportsState>() {
-        if let Ok(mut map) = state.aborts.lock() {
-            map.remove(&import_id);
-        }
-    }
+    cleanup_abort(&app, &import_id);
 
     let total = segment_count.lock().map(|n| *n).unwrap_or(0);
     let aborted = abort.load(Ordering::Relaxed);
@@ -264,6 +392,19 @@ fn run_streaming_worker(
             crate::log(&format!(
                 "[audio-import] done: {import_id} ({total} segment(s))"
             ));
+            // AIZ-38 — flip the pill to "staging" between whisper hitting
+            // 100% and the final batch landing in gemma. Short-lived but
+            // makes the transition explicit so the user knows the bar
+            // hasn't stalled.
+            emit_phase(
+                &app,
+                &import_id,
+                "staging",
+                "Building meeting graph…",
+                None,
+                None,
+                None,
+            );
             if let Err(e) = app.emit(
                 "audio-import-done",
                 AudioImportDonePayload {
@@ -285,16 +426,55 @@ fn run_streaming_worker(
             ));
         }
         Err(message) => {
-            crate::log(&format!("[audio-import] error: {import_id}: {message}"));
-            if let Err(e) = app.emit(
-                "audio-import-error",
-                AudioImportErrorPayload {
-                    import_id: import_id.clone(),
-                    message,
-                },
-            ) {
-                crate::log(&format!("[audio-import] emit error failed: {e}"));
-            }
+            emit_error(&app, &import_id, &message);
+        }
+    }
+}
+
+/// AIZ-38 — emit a `audio-import-phase` event scoped to one import.
+fn emit_phase(
+    app: &AppHandle,
+    import_id: &str,
+    phase: &'static str,
+    label: &str,
+    bytes: Option<u64>,
+    total: Option<u64>,
+    percent: Option<i32>,
+) {
+    if let Err(e) = app.emit(
+        "audio-import-phase",
+        AudioImportPhasePayload {
+            import_id: import_id.to_string(),
+            phase,
+            label: label.to_string(),
+            bytes,
+            total,
+            percent,
+        },
+    ) {
+        crate::log(&format!(
+            "[audio-import] emit phase {phase} failed for {import_id}: {e}"
+        ));
+    }
+}
+
+fn emit_error(app: &AppHandle, import_id: &str, message: &str) {
+    crate::log(&format!("[audio-import] error: {import_id}: {message}"));
+    if let Err(e) = app.emit(
+        "audio-import-error",
+        AudioImportErrorPayload {
+            import_id: import_id.to_string(),
+            message: message.to_string(),
+        },
+    ) {
+        crate::log(&format!("[audio-import] emit error failed: {e}"));
+    }
+}
+
+fn cleanup_abort(app: &AppHandle, import_id: &str) {
+    if let Some(state) = app.try_state::<AudioImportsState>() {
+        if let Ok(mut map) = state.aborts.lock() {
+            map.remove(import_id);
         }
     }
 }

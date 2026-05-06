@@ -1,7 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import type { Mode, RunStats, Status } from "@/hooks/useMeetingSession";
 import { SPEED_MULTIPLIER } from "@/hooks/useMeetingSession";
+import type { AudioImportPhase } from "@/lib/aizuchi/feeder";
 import type { Graph } from "@/lib/aizuchi/schemas";
+
+function formatBytes(bytes: number): string {
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+	if (bytes < 1024 * 1024 * 1024)
+		return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+	return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
 
 export function MeetingStatusPanel({
 	status,
@@ -17,6 +26,7 @@ export function MeetingStatusPanel({
 	importStreamSegmentCount,
 	importStreamProgress,
 	importStreamFinished,
+	importStreamPhase,
 	onSetName,
 	onStartDemo,
 	onStartLive,
@@ -39,6 +49,7 @@ export function MeetingStatusPanel({
 	importStreamSegmentCount: number;
 	importStreamProgress: number;
 	importStreamFinished: boolean;
+	importStreamPhase: AudioImportPhase | null;
 	onSetName: (name: string) => void;
 	onStartDemo: () => void;
 	onStartLive: () => void;
@@ -134,22 +145,11 @@ export function MeetingStatusPanel({
 				</div>
 			)}
 			{mode === "import" && !importStreamFinished && !isArchived && (
-				<div className="flex flex-col gap-1 text-[11px] text-amber-700 dark:text-amber-300">
-					<div className="flex items-center gap-1.5">
-						<span className="size-1.5 animate-pulse rounded-full bg-amber-500" />
-						<span>
-							Whisper transcribing… {importStreamProgress}% (
-							{importStreamSegmentCount} segment
-							{importStreamSegmentCount === 1 ? "" : "s"})
-						</span>
-					</div>
-					<div className="h-1 w-full overflow-hidden rounded-full bg-amber-500/15">
-						<div
-							className="h-full bg-amber-500 transition-[width] duration-300 ease-out"
-							style={{ width: `${importStreamProgress}%` }}
-						/>
-					</div>
-				</div>
+				<ImportStreamStatus
+					phase={importStreamPhase}
+					segmentCount={importStreamSegmentCount}
+					progress={importStreamProgress}
+				/>
 			)}
 			<div className="text-muted-foreground">
 				{graph.nodes.length} nodes · {graph.edges.length} edges
@@ -347,5 +347,83 @@ function MeetingNameField({
 		>
 			{displayName}
 		</button>
+	);
+}
+
+// AIZ-38 — phased status pill for streaming audio imports. Renders the
+// current phase's label, falling back to the AIZ-47 "Whisper transcribing
+// X%" copy when no phase event has fired yet (e.g. the very first frame
+// before the worker thread starts). During `downloading-model` we show
+// byte counts; during whisper inference we show the percent + segment
+// count. `decoding` / `staging` are intentionally indeterminate: they
+// are short-lived and we don't have a meaningful progress fraction.
+function ImportStreamStatus({
+	phase,
+	segmentCount,
+	progress,
+}: {
+	phase: AudioImportPhase | null;
+	segmentCount: number;
+	progress: number;
+}) {
+	let label: string;
+	let barPercent: number | null;
+	let detail: string | null;
+
+	if (phase === null) {
+		label = "Whisper transcribing…";
+		barPercent = progress;
+		detail = `${progress}% (${segmentCount} segment${
+			segmentCount === 1 ? "" : "s"
+		})`;
+	} else if (phase.phase === "downloading-model") {
+		label = phase.label;
+		barPercent = phase.percent ?? null;
+		if (phase.bytes !== undefined && phase.total !== undefined) {
+			detail = `${formatBytes(phase.bytes)} / ${formatBytes(phase.total)}`;
+		} else if (phase.bytes !== undefined) {
+			detail = formatBytes(phase.bytes);
+		} else {
+			detail = null;
+		}
+	} else if (phase.phase === "transcribing") {
+		label = "Whisper transcribing…";
+		barPercent = progress;
+		detail = `${progress}% (${segmentCount} segment${
+			segmentCount === 1 ? "" : "s"
+		})`;
+	} else if (phase.phase === "staging") {
+		label = phase.label;
+		barPercent = 100;
+		detail = `${segmentCount} segment${segmentCount === 1 ? "" : "s"}`;
+	} else {
+		// `decoding` and any future indeterminate phase fall here.
+		label = phase.label;
+		barPercent = null;
+		detail = null;
+	}
+
+	return (
+		<div className="flex flex-col gap-1 text-[11px] text-amber-700 dark:text-amber-300">
+			<div className="flex items-center gap-1.5">
+				<span className="size-1.5 animate-pulse rounded-full bg-amber-500" />
+				<span>{label}</span>
+				{detail && (
+					<span className="text-amber-700/70 dark:text-amber-300/70">
+						{detail}
+					</span>
+				)}
+			</div>
+			<div className="h-1 w-full overflow-hidden rounded-full bg-amber-500/15">
+				{barPercent === null ? (
+					<div className="h-full w-1/3 animate-pulse bg-amber-500" />
+				) : (
+					<div
+						className="h-full bg-amber-500 transition-[width] duration-300 ease-out"
+						style={{ width: `${barPercent}%` }}
+					/>
+				)}
+			</div>
+		</div>
 	);
 }
