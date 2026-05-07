@@ -8,6 +8,7 @@ import {
 	Panel as ResizePanel,
 	Separator as ResizeSeparator,
 } from "react-resizable-panels";
+import { EventTimelineStrip } from "@/components/aizuchi/EventTimelineStrip";
 import { LiveTranscript } from "@/components/aizuchi/LiveTranscript";
 import { MeetingCanvas } from "@/components/aizuchi/MeetingCanvas";
 import { MeetingOutline } from "@/components/aizuchi/MeetingOutline";
@@ -270,6 +271,16 @@ function MeetingPrototype() {
 	}, []);
 	const onPaneClick = useCallback(() => setSelectedId(null), []);
 
+	// AIZ-45 — strip-side mirror of canvas hover. Only `event`-typed hovers
+	// matter (the strip is event-only); other types clear the hovered chip.
+	const [hoveredEventId, setHoveredEventId] = useState<string | null>(null);
+	const onNodeHover = useCallback((node: AzNode | null) => {
+		setHoveredEventId(node?.type === "event" ? node.id : null);
+	}, []);
+	const onStripSelect = useCallback((id: string) => {
+		setSelectedId((current) => (current === id ? null : id));
+	}, []);
+
 	return (
 		<div
 			ref={groupWrapperRef}
@@ -281,55 +292,67 @@ function MeetingPrototype() {
 				disableCursor
 			>
 				<ResizePanel defaultSize={72} minSize={40}>
-					<div className="relative h-full w-full">
+					<div className="relative flex h-full w-full flex-col">
 						<div className="aiz-canvas-shield pointer-events-none absolute inset-0 z-[2000] hidden" />
-						<MeetingCanvas
-							graph={session.graph}
-							positions={positions}
-							highlightIds={session.highlightIds}
-							selectedId={selectedId}
-							settledAt={settledAt}
-							onNodeClick={onNodeClick}
-							onPaneClick={onPaneClick}
-						>
-							<div className="pointer-events-none absolute inset-0">
-								<div className="pointer-events-auto absolute top-2 left-2">
-									<MeetingStatusPanel
-										status={session.status}
-										mode={session.mode}
-										batchIdx={session.batchIdx}
-										chunkCount={session.transcript.length}
-										graph={session.graph}
-										error={session.error}
-										stats={session.stats}
-										archivedAt={session.archivedAt}
-										name={session.name}
-										nameLockedByUser={session.nameLockedByUser}
-										importStreamSegmentCount={session.importStreamSegmentCount}
-										importStreamProgress={session.importStreamProgress}
-										importStreamFinished={session.importStreamFinished}
-										onSetName={session.setMeetingName}
-										onStartDemo={session.startDemo}
-										onStartLive={session.startLive}
-										onResumeLive={session.resumeLive}
-										onStopLive={session.stopLive}
-										onPause={session.pauseDemo}
-										onResume={session.resumeDemo}
-										onReset={session.resetDemo}
-									/>
-								</div>
-								{session.transcript.length > 0 && (
-									<div className="-translate-x-1/2 pointer-events-auto absolute bottom-2 left-1/2">
-										<LiveTranscript
-											chunks={session.transcript}
-											passes={session.passes}
-											open={session.transcriptOpen}
-											onToggle={() => session.setTranscriptOpen((v) => !v)}
+						<div className="relative min-h-0 flex-1">
+							<MeetingCanvas
+								graph={session.graph}
+								positions={positions}
+								highlightIds={session.highlightIds}
+								selectedId={selectedId}
+								settledAt={settledAt}
+								onNodeClick={onNodeClick}
+								onPaneClick={onPaneClick}
+								onNodeHover={onNodeHover}
+							>
+								<div className="pointer-events-none absolute inset-0">
+									<div className="pointer-events-auto absolute top-2 left-2">
+										<MeetingStatusPanel
+											status={session.status}
+											mode={session.mode}
+											batchIdx={session.batchIdx}
+											chunkCount={session.transcript.length}
+											graph={session.graph}
+											error={session.error}
+											stats={session.stats}
+											archivedAt={session.archivedAt}
+											name={session.name}
+											nameLockedByUser={session.nameLockedByUser}
+											importStreamSegmentCount={
+												session.importStreamSegmentCount
+											}
+											importStreamProgress={session.importStreamProgress}
+											importStreamFinished={session.importStreamFinished}
+											onSetName={session.setMeetingName}
+											onStartDemo={session.startDemo}
+											onStartLive={session.startLive}
+											onResumeLive={session.resumeLive}
+											onStopLive={session.stopLive}
+											onPause={session.pauseDemo}
+											onResume={session.resumeDemo}
+											onReset={session.resetDemo}
 										/>
 									</div>
-								)}
-							</div>
-						</MeetingCanvas>
+									{session.transcript.length > 0 && (
+										<div className="-translate-x-1/2 pointer-events-auto absolute bottom-2 left-1/2">
+											<LiveTranscript
+												chunks={session.transcript}
+												passes={session.passes}
+												open={session.transcriptOpen}
+												onToggle={() => session.setTranscriptOpen((v) => !v)}
+											/>
+										</div>
+									)}
+								</div>
+							</MeetingCanvas>
+						</div>
+						<EventTimelineStrip
+							graph={session.graph}
+							selectedId={selectedId}
+							hoveredEventId={hoveredEventId}
+							onSelect={onStripSelect}
+							onHoverChange={setHoveredEventId}
+						/>
 					</div>
 				</ResizePanel>
 				<ResizeSeparator className="group relative w-px bg-transparent">
