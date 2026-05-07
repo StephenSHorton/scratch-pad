@@ -323,6 +323,7 @@ function MeetingPrototype() {
 											}
 											importStreamProgress={session.importStreamProgress}
 											importStreamFinished={session.importStreamFinished}
+											importStreamPhase={session.importStreamPhase}
 											onSetName={session.setMeetingName}
 											onStartDemo={session.startDemo}
 											onStartLive={session.startLive}

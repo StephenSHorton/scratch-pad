@@ -195,6 +195,28 @@ export interface AudioImportStreamOptions {
 	onDone?: (segmentCount: number) => void;
 	/** Fires once when the backend reports `audio-import-error`. */
 	onError?: (message: string) => void;
+	/** AIZ-38 — fires for each `audio-import-phase` event. The backend
+	 * emits one when entering each named stage of the import pipeline
+	 * (`downloading-model` / `decoding` / `transcribing` / `staging`)
+	 * plus throttled byte-level progress ticks during the model
+	 * download. */
+	onPhase?: (phase: AudioImportPhase) => void;
+}
+
+/**
+ * AIZ-38 — payload of the `audio-import-phase` Tauri event. Backend
+ * emits these in order: `downloading-model` (only on first run; multiple
+ * ticks with byte counts) → `decoding` (no progress) → `transcribing`
+ * (one initial tick, see also the existing `audio-import-progress`
+ * event for percent updates) → `staging` (between whisper hitting 100%
+ * and the final batch landing).
+ */
+export interface AudioImportPhase {
+	phase: "downloading-model" | "decoding" | "transcribing" | "staging";
+	label: string;
+	bytes?: number;
+	total?: number;
+	percent?: number;
 }
 
 /**
@@ -259,6 +281,14 @@ export async function* consumeAudioImportStream(
 		wakeWaiter();
 	});
 
+	const unlistenPhase: UnlistenFn = await listen<
+		{ importId: string } & AudioImportPhase
+	>("audio-import-phase", (event) => {
+		if (event.payload.importId !== opts.importId) return;
+		const { phase, label, bytes, total, percent } = event.payload;
+		opts.onPhase?.({ phase, label, bytes, total, percent });
+	});
+
 	try {
 		let buf: TranscriptChunk[] = [];
 		let words = 0;
@@ -321,5 +351,6 @@ export async function* consumeAudioImportStream(
 		unlistenProgress();
 		unlistenDone();
 		unlistenError();
+		unlistenPhase();
 	}
 }

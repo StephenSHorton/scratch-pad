@@ -209,12 +209,38 @@ fn diarize_debug_enabled() -> bool {
 
 /// Minimum size we'll accept as a complete model. small.en-tdrz is ~488MB;
 /// bump this constant if MODEL_URL changes again.
-const MIN_MODEL_BYTES: u64 = 400_000_000;
+pub const MIN_MODEL_BYTES: u64 = 400_000_000;
 
-/// Downloads the model via curl if it's not already at `path`. Blocking.
+/// Downloads the model if it's not already at `path`. Blocking.
 /// Re-downloads when the existing file is suspiciously small (partial fetch
-/// from an earlier interrupted run).
+/// from an earlier interrupted run). Convenience wrapper around
+/// `ensure_model_with_progress` for callers that don't care about progress
+/// or cancellation.
 pub fn ensure_model(path: &Path, url: &str) -> Result<(), String> {
+    let abort = AtomicBool::new(false);
+    ensure_model_with_progress(path, url, &abort, |_, _| {})
+}
+
+/// Like `ensure_model`, but invokes `on_progress(downloaded_bytes, total_bytes)`
+/// as the model streams. `total_bytes` is `None` when the server doesn't
+/// send `Content-Length`. The callback is *not* invoked when the model is
+/// already present — callers should treat "no callbacks" as the no-op /
+/// cached-model path. AIZ-38 — see `audio_import.rs` for the
+/// `audio-import-phase` events the worker thread builds on top of these.
+///
+/// `abort` is checked between 64KB chunks. On cancel the function returns
+/// `Err("Model download cancelled")` and leaves a `*.bin.partial` next
+/// to `path` for the next run to overwrite (`File::create` truncates, so
+/// no cleanup is required).
+pub fn ensure_model_with_progress<F>(
+    path: &Path,
+    url: &str,
+    abort: &AtomicBool,
+    mut on_progress: F,
+) -> Result<(), String>
+where
+    F: FnMut(u64, Option<u64>),
+{
     if path.exists() {
         match std::fs::metadata(path) {
             Ok(meta) if meta.len() >= MIN_MODEL_BYTES => return Ok(()),
@@ -236,16 +262,65 @@ pub fn ensure_model(path: &Path, url: &str) -> Result<(), String> {
             .map_err(|e| format!("Failed to create model dir: {e}"))?;
     }
     eprintln!("[whisper] downloading model from {url} → {path:?}");
-    let status = std::process::Command::new("curl")
-        .args(["-L", "-f", "--progress-bar", "-o"])
-        .arg(path)
-        .arg(url)
-        .status()
-        .map_err(|e| format!("Failed to spawn curl: {e}"))?;
-    if !status.success() {
-        std::fs::remove_file(path).ok();
-        return Err(format!("curl exited with status {status} downloading model"));
+
+    // Use a blocking reqwest client so we can stream the body and report
+    // bytes/total to the caller. `rustls-tls` keeps the build pure-Rust;
+    // we don't depend on the system's OpenSSL.
+    let client = reqwest::blocking::Client::builder()
+        .timeout(None)
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+    let mut response = client
+        .get(url)
+        .send()
+        .map_err(|e| format!("Failed to GET model: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Model download returned HTTP {} for {url}",
+            response.status()
+        ));
     }
+    let total: Option<u64> = response.content_length();
+
+    // Write to a sibling tempfile and rename on success so a failed/aborted
+    // download doesn't leave a partial blob at `path` that the cached-model
+    // check would later trip over.
+    let tmp_path = path.with_extension("bin.partial");
+    let mut tmp = std::fs::File::create(&tmp_path)
+        .map_err(|e| format!("Failed to create temp model file: {e}"))?;
+
+    let mut buf = [0u8; 64 * 1024];
+    let mut downloaded: u64 = 0;
+    // Initial 0% tick so the UI can render the bar before the first chunk.
+    on_progress(0, total);
+    loop {
+        use std::io::Read;
+        use std::io::Write;
+        // Cancellation is checked once per 64KB chunk so a closing meeting
+        // window doesn't tie up the network for the rest of a 488MB stream.
+        // Leave the `.bin.partial` in place; the next run's `File::create`
+        // truncates it.
+        if abort.load(Ordering::Relaxed) {
+            drop(tmp);
+            return Err("Model download cancelled".into());
+        }
+        let n = response
+            .read(&mut buf)
+            .map_err(|e| format!("Read from model stream failed: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        tmp.write_all(&buf[..n])
+            .map_err(|e| format!("Write to temp model file failed: {e}"))?;
+        downloaded += n as u64;
+        on_progress(downloaded, total);
+    }
+    drop(tmp);
+
+    std::fs::rename(&tmp_path, path).map_err(|e| {
+        std::fs::remove_file(&tmp_path).ok();
+        format!("Failed to move temp model into place: {e}")
+    })?;
     Ok(())
 }
 

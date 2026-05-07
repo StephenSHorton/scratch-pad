@@ -10,6 +10,7 @@ import {
 } from "react";
 import { formatChunkBatch } from "@/lib/aizuchi/batcher";
 import {
+	type AudioImportPhase,
 	type Batch,
 	consumeAudioImportStream,
 	consumeLiveStream,
@@ -152,6 +153,10 @@ export interface MeetingSession {
 	/** True once whisper signals `audio-import-done` (or aborts/errors)
 	 * for the active streaming import. Lets the status pill clear. */
 	importStreamFinished: boolean;
+	/** AIZ-38 — current phase of the streaming-import pipeline. `null`
+	 * until the worker emits its first `audio-import-phase` event (or
+	 * outside of streaming imports). */
+	importStreamPhase: AudioImportPhase | null;
 	pauseDemo: () => void;
 	resumeDemo: () => void;
 	resetDemo: () => void;
@@ -188,6 +193,11 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 	const [importStreamSegmentCount, setImportStreamSegmentCount] = useState(0);
 	const [importStreamProgress, setImportStreamProgress] = useState(0);
 	const [importStreamFinished, setImportStreamFinished] = useState(false);
+	// AIZ-38 — named-phase progress (downloading-model / decoding /
+	// transcribing / staging). The status panel renders the label and a
+	// bytes/total progress bar during the model download.
+	const [importStreamPhase, setImportStreamPhase] =
+		useState<AudioImportPhase | null>(null);
 
 	const consumedChunksRef = useRef(0);
 	const thoughtsRef = useRef<AIThoughtRecord[]>([]);
@@ -370,6 +380,7 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		setImportStreamSegmentCount(0);
 		setImportStreamProgress(0);
 		setImportStreamFinished(false);
+		setImportStreamPhase(null);
 		// AIZ-16 — clear naming state for a fresh session. Resume reuses
 		// existing values and goes through resumeLive instead.
 		nameRef.current = null;
@@ -798,6 +809,9 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 				setImportStreamFinished(true);
 				setError(message);
 			},
+			onPhase: (phase) => {
+				setImportStreamPhase(phase);
+			},
 		});
 		await runSession(batches, "import", startGraph);
 	};
@@ -1058,6 +1072,7 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		importStreamSegmentCount,
 		importStreamProgress,
 		importStreamFinished,
+		importStreamPhase,
 		pauseDemo,
 		resumeDemo,
 		resetDemo,
