@@ -489,6 +489,12 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		namingInFlightRef.current = false;
 		setName(snap.name ?? null);
 		setNameLockedByUser(snap.nameLockedByUser ?? false);
+		// AIZ-14 — restore extraction mode so a resumed live snapshot
+		// keeps running in substance mode (set by `startLive`). Older
+		// snapshots without this field fall through to undefined, which
+		// means "attribution" downstream — fine for archived demos but
+		// resumeLive coerces back to substance below.
+		extractionModeRef.current = snap.extractionMode;
 	};
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: hydrateFromSnapshot only writes to refs and stable setState setters; including it would re-run the snapshot load on every render
@@ -859,6 +865,12 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		meetingIdRef.current = meetingId === "test" ? newMeetingId() : meetingId;
 		startedAtRef.current = Date.now();
 		sessionSavedRef.current = false;
+		// AIZ-14 — tinydiarize emits a single `Speaker A` label for every
+		// segment (see `audio.rs::TranscriptSegment::speaker`). Run the
+		// extraction prompt in substance mode so we never produce a
+		// bogus single-`person` graph from a stand-in label. Mirrors the
+		// audio-import path (AIZ-31).
+		extractionModeRef.current = "substance";
 		await _startLiveCore({ startGraph, chunkOffsetMs: 0 });
 	};
 
@@ -878,6 +890,10 @@ export function useMeetingSession(meetingId: string): MeetingSession {
 		// would short-circuit because the previous live session set the ref
 		// to true before archiving.
 		sessionSavedRef.current = false;
+		// AIZ-14 — older live snapshots persisted before substance-mode
+		// was forced on for live; coerce so the resumed loop matches the
+		// startLive default.
+		extractionModeRef.current = "substance";
 		setError(null);
 		setArchivedAt(null);
 		setStatus("listening");

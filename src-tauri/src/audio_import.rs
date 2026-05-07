@@ -130,11 +130,12 @@ pub fn start_streaming_audio_import(
     // `audio-import-error` event.
     audio::ensure_model(&model_path, audio::MODEL_URL)?;
 
-    // AIZ-31 deliberately forces Substance mode. AIZ-14 (live-diarization
-    // over-segmentation) is open; tinydiarize on file input may inherit
-    // the same bug, and the attribution prompt would treat bogus speaker
-    // boundaries as real participants. Once AIZ-14 is verified fixed for
-    // file input, switch to a chunks-aware computation.
+    // AIZ-14 resolution: tinydiarize cannot identify speakers (no
+    // embeddings) — its turn-flag is too noisy to drive labels. Both
+    // file and live paths now emit a single `Speaker A` label, so
+    // attribution mode would only ever produce one bogus `person`
+    // node. Force Substance mode until a real embedding-based
+    // diarizer lands.
     let extraction_mode = ExtractionMode::Substance;
 
     let id = transcript_import::stage_streaming_audio_pending(
