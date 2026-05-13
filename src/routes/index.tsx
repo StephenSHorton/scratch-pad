@@ -208,20 +208,31 @@ function StickyNote() {
 		if (!note || isRemote) return;
 		const win = getCurrentWindow();
 		let timeout: ReturnType<typeof setTimeout>;
-		const unlisten = win.onMoved(async (event) => {
-			clearTimeout(timeout);
-			const scaleFactor = await win.scaleFactor();
-			timeout = setTimeout(() => {
-				invoke("update_note_position", {
-					id: note.id,
-					x: event.payload.x / scaleFactor,
-					y: event.payload.y / scaleFactor,
-				});
-			}, 500); // debounce
+		let unlistenFn: (() => void) | null = null;
+		// Fetch scaleFactor ONCE — putting an `await` inside the move handler
+		// breaks debounce because `clearTimeout(timeout)` runs before the
+		// `setTimeout(...)` assignment resumes, so each move event ends up
+		// scheduling its own timer instead of cancelling the previous one.
+		// Result: an invoke per move event (5ms apart) which floods notes.json
+		// writes, triggers mid-write empty reads in sync_windows, and the
+		// note window gets destroyed mid-drag.
+		win.scaleFactor().then((scaleFactor) => {
+			win.onMoved((event) => {
+				clearTimeout(timeout);
+				timeout = setTimeout(() => {
+					invoke("update_note_position", {
+						id: note.id,
+						x: event.payload.x / scaleFactor,
+						y: event.payload.y / scaleFactor,
+					});
+				}, 250);
+			}).then((fn) => {
+				unlistenFn = fn;
+			});
 		});
 		return () => {
 			clearTimeout(timeout);
-			unlisten.then((fn) => fn());
+			unlistenFn?.();
 		};
 	}, [note?.id, isRemote, note]);
 

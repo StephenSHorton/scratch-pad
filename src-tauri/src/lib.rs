@@ -8,12 +8,15 @@ mod transcript_import;
 use chrono::{DateTime, Utc};
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
-use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+#[cfg(target_os = "macos")]
+use tauri::menu::{CheckMenuItem, Submenu};
 use tauri::tray::TrayIconBuilder;
 use tauri::webview::Color;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
@@ -60,6 +63,12 @@ pub struct Size {
 
 pub struct NotesState {
     pub notes: Mutex<Vec<Note>>,
+    /// Note IDs whose `position` field was just written by a local drag.
+    /// The next `sync_windows` pass consumes the ID and skips its
+    /// `set_position` back-apply, so the in-progress drag doesn't fight an
+    /// out-of-date saved position. MCP-driven moves don't set this flag
+    /// and continue to round-trip through `set_position` normally.
+    pub skip_next_position_sync: Mutex<HashSet<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,9 +114,10 @@ pub(crate) fn log(msg: &str) {
     use std::io::Write;
     let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S%.3f");
     let line = format!("[{timestamp}] {msg}\n");
-    eprint!("{line}");
+    // Write to file FIRST so a blocked stderr pipe (e.g. when stdout is
+    // captured by a pipe that isn't being drained) doesn't drop log entries
+    // on the floor.
     let path = log_file();
-    // Rotate if log exceeds 1MB
     if let Ok(meta) = fs::metadata(&path) {
         if meta.len() > 1_000_000 {
             let old = path.with_extension("log.old");
@@ -120,7 +130,9 @@ pub(crate) fn log(msg: &str) {
         .open(&path)
     {
         f.write_all(line.as_bytes()).ok();
+        f.flush().ok();
     }
+    eprint!("{line}");
 }
 
 fn notes_file() -> PathBuf {
@@ -324,27 +336,61 @@ pub(crate) fn open_meeting_window_with_query(
     }
 }
 
-fn open_palette_window(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("palette") {
-        window.set_focus().ok();
+/// Build the palette webview hidden. Called eagerly from setup() so the
+/// build doesn't have to run from a tauri-command worker thread (which
+/// silently hangs in `builder.build()` on Windows for reasons we haven't
+/// nailed down). `open_palette_window` then just toggles visibility.
+fn ensure_palette_window(app: &AppHandle) {
+    if app.get_webview_window("palette").is_some() {
         return;
     }
-    // Pure-transparent window — the glass is CSS (backdrop-filter + bg-black/40)
-    // so it animates in as one unit with the motion fade. Native vibrancy
-    // would render before React mounts, causing a visible two-step appear.
-    WebviewWindowBuilder::new(app, "palette", WebviewUrl::default())
+    let builder = WebviewWindowBuilder::new(app, "palette", WebviewUrl::default())
         .title("Command Palette")
         .decorations(false)
-        .transparent(true)
-        .background_color(TRANSPARENT_BG)
-        .always_on_top(true)
         .skip_taskbar(true)
+        .always_on_top(true)
         .resizable(false)
         .inner_size(640.0, 420.0)
-        .center()
-        .focused(true)
-        .build()
-        .ok();
+        .visible(false)
+        .center();
+    // macOS: stay transparent so the CSS `bg-black/40 + backdrop-blur` glass
+    // sits over the actual desktop. Windows/Linux: paint an opaque dark
+    // surface so the same CSS lands against dark instead of the default
+    // white webview background, which made the palette wash out.
+    #[cfg(target_os = "macos")]
+    let builder = builder.transparent(true).background_color(TRANSPARENT_BG);
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.background_color(Color(20, 20, 24, 255));
+    match builder.build() {
+        Ok(window) => {
+            // Intercept close (Ctrl+W, programmatic close, etc.). The palette
+            // is a singleton built once at setup; we can't reliably rebuild
+            // it from a tauri-command worker thread because `builder.build()`
+            // hangs in that context on Windows. Instead of hiding directly,
+            // emit an event so React can play the same exit animation Escape
+            // triggers — then `close_palette` does the actual `.hide()`.
+            let win_for_close = window.clone();
+            window.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = win_for_close.emit("palette-close-request", ());
+                }
+            });
+        }
+        Err(e) => log(&format!("[palette] pre-build failed: {e}")),
+    }
+}
+
+fn open_palette_window(app: &AppHandle) {
+    ensure_palette_window(app);
+    if let Some(window) = app.get_webview_window("palette") {
+        window.show().ok();
+        window.set_focus().ok();
+        // Explicit open signal so the React palette resets state and mounts
+        // its UI. Don't piggyback on the focus event for this — clicking the
+        // window for any other reason would re-trigger it.
+        let _ = window.emit("palette-open-request", ());
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -510,6 +556,13 @@ fn update_note_body(id: String, body: String, title: Option<String>, state: taur
 
 #[tauri::command]
 fn update_note_position(id: String, x: f64, y: f64, state: tauri::State<'_, NotesState>) {
+    // Mark FIRST, then write — otherwise the file watcher can fire
+    // `sync_windows` from the write before we've inserted the id, and the
+    // sync would re-apply the position back onto the still-being-dragged
+    // window, causing visible jumpiness.
+    if let Ok(mut skip) = state.skip_next_position_sync.lock() {
+        skip.insert(id.clone());
+    }
     if let Ok(mut notes) = state.notes.lock() {
         if let Some(note) = notes.iter_mut().find(|n| n.id == id) {
             note.position = Some(Position { x, y });
@@ -561,8 +614,10 @@ fn open_palette(
 
 #[tauri::command]
 fn close_palette(app: AppHandle) {
+    // Hide rather than close so we don't have to rebuild on next open
+    // (palette is pre-built once during setup; see `ensure_palette_window`).
     if let Some(window) = app.get_webview_window("palette") {
-        window.close().ok();
+        window.hide().ok();
     }
 }
 
@@ -576,19 +631,32 @@ fn get_palette_context(palette_state: tauri::State<'_, PaletteState>) -> Option<
 }
 
 #[tauri::command]
-fn dispatch_action(app: AppHandle, id: String, state: tauri::State<'_, NotesState>) {
+fn dispatch_action(
+    app: AppHandle,
+    id: String,
+    _state: tauri::State<'_, NotesState>,
+) {
     log(&format!("dispatch_action: {id}"));
-    match id.as_str() {
-        "new_pad" => create_blank_note(),
-        "organize" => organize_windows(&app, &state),
-        "show_logs" => open_logs_window(&app),
-        "lobby" => open_lobby_window(&app),
-        "aizuchi" => open_meeting_window(&app, None),
-        "show_hidden_pads" => {
-            restore_hidden_pads(&app, &state);
+    // Window-building actions (show_logs, lobby, aizuchi) hang on Windows
+    // when `WebviewWindowBuilder::build()` is called from a tauri-command
+    // worker. Move the work to a plain OS thread — the same context that
+    // note windows successfully build in from the file watcher / sync path.
+    // This also prevents a single hung build from blocking subsequent
+    // commands (drag IPC, close_palette, etc.).
+    std::thread::spawn(move || {
+        let state = app.state::<NotesState>();
+        match id.as_str() {
+            "new_pad" => create_blank_note(),
+            "organize" => organize_windows(&app, &state),
+            "show_logs" => open_logs_window(&app),
+            "lobby" => open_lobby_window(&app),
+            "aizuchi" => open_meeting_window(&app, None),
+            "show_hidden_pads" => {
+                restore_hidden_pads(&app, &state);
+            }
+            _ => log(&format!("dispatch_action: unknown id {id}")),
         }
-        _ => log(&format!("dispatch_action: unknown id {id}")),
-    }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -653,7 +721,10 @@ fn delete_meeting(id: String) -> Result<(), String> {
 
 #[tauri::command]
 fn open_meeting(app: AppHandle, id: Option<String>) {
-    open_meeting_window(&app, id.as_deref());
+    // Same Windows command-thread hang fix as `dispatch_action`.
+    std::thread::spawn(move || {
+        open_meeting_window(&app, id.as_deref());
+    });
 }
 
 /// AIZ-30 — pop the chunks staged by `POST /v1/meetings/import` for the
@@ -1296,6 +1367,22 @@ fn create_note_window(app: &AppHandle, note: &Note, _index: usize) {
 
 pub(crate) fn sync_windows(app: &AppHandle, state: &NotesState) {
     let mut notes = read_notes();
+    // Defensive: `fs::write` on notes.json briefly truncates the file before
+    // writing new contents. If the watcher fires during that window, the
+    // read returns 0 notes. Acting on that — by closing every window — is
+    // catastrophic during a drag. If we have notes in cached state but the
+    // disk read is empty, treat it as a mid-write artifact and bail.
+    if notes.is_empty() {
+        let cached_has_notes = state
+            .notes
+            .lock()
+            .ok()
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
+        if cached_has_notes {
+            return;
+        }
+    }
     let now = Utc::now();
 
     // Filter out expired notes
@@ -1352,9 +1439,22 @@ pub(crate) fn sync_windows(app: &AppHandle, state: &NotesState) {
         if let Some(window) = app.get_webview_window(&note.id) {
             // Window already exists — push updated data to the frontend
             window.emit("note-updated", note.clone()).ok();
-            // Apply position/size if set (e.g. from MCP move/resize)
-            if let Some(ref pos) = note.position {
-                window.set_position(tauri::LogicalPosition::new(pos.x, pos.y)).ok();
+            // Apply position back unless this sync was triggered by our own
+            // drag-position write — re-applying would interrupt the active
+            // OS-level drag and cause visible jumpiness. MCP-driven moves
+            // don't set the skip flag and still round-trip normally.
+            let skip_position = state
+                .skip_next_position_sync
+                .lock()
+                .ok()
+                .map(|mut s| s.remove(&note.id))
+                .unwrap_or(false);
+            if !skip_position {
+                if let Some(ref pos) = note.position {
+                    window
+                        .set_position(tauri::LogicalPosition::new(pos.x, pos.y))
+                        .ok();
+                }
             }
             if let Some(ref size) = note.size {
                 window.set_size(tauri::LogicalSize::new(size.width, size.height)).ok();
@@ -1444,6 +1544,7 @@ pub fn run() {
     let app = tauri::Builder::default()
         .manage(NotesState {
             notes: Mutex::new(vec![]),
+            skip_next_position_sync: Mutex::new(HashSet::new()),
         })
         .manage(SettingsState {
             settings: Mutex::new(read_settings()),
@@ -1508,67 +1609,72 @@ pub fn run() {
             log_from_frontend,
         ])
         .setup(|app| {
-            // Build the macOS menu bar
-            let app_submenu = Submenu::with_items(
-                app,
-                "Aizuchi",
-                true,
-                &[
-                    &PredefinedMenuItem::about(app, Some("About Aizuchi"), Some(tauri::menu::AboutMetadata {
-                        version: Some(app.config().version.clone().unwrap_or_default()),
-                        ..Default::default()
-                    }))?,
-                    &MenuItem::with_id(app, "check_updates", "Check for Updates...", true, None::<&str>)?,
-                    &MenuItem::with_id(app, "show_logs", "Show Logs", true, None::<&str>)?,
-                    &PredefinedMenuItem::separator(app)?,
-                    &PredefinedMenuItem::hide(app, None)?,
-                    &PredefinedMenuItem::hide_others(app, None)?,
-                    &PredefinedMenuItem::show_all(app, None)?,
-                    &PredefinedMenuItem::separator(app)?,
-                    &PredefinedMenuItem::quit(app, None)?,
-                ],
-            )?;
+            // macOS app menu bar. On Windows/Linux, an app menu attaches as a
+            // native menu bar inside each window frame — including the
+            // chromeless palette window — so it's macOS-only.
+            #[cfg(target_os = "macos")]
+            {
+                let app_submenu = Submenu::with_items(
+                    app,
+                    "Aizuchi",
+                    true,
+                    &[
+                        &PredefinedMenuItem::about(app, Some("About Aizuchi"), Some(tauri::menu::AboutMetadata {
+                            version: Some(app.config().version.clone().unwrap_or_default()),
+                            ..Default::default()
+                        }))?,
+                        &MenuItem::with_id(app, "check_updates", "Check for Updates...", true, None::<&str>)?,
+                        &MenuItem::with_id(app, "show_logs", "Show Logs", true, None::<&str>)?,
+                        &PredefinedMenuItem::separator(app)?,
+                        &PredefinedMenuItem::hide(app, None)?,
+                        &PredefinedMenuItem::hide_others(app, None)?,
+                        &PredefinedMenuItem::show_all(app, None)?,
+                        &PredefinedMenuItem::separator(app)?,
+                        &PredefinedMenuItem::quit(app, None)?,
+                    ],
+                )?;
 
-            let file_submenu = Submenu::with_items(
-                app,
-                "File",
-                true,
-                &[
-                    &MenuItem::with_id(app, "new_pad", "New Pad", true, Some("CmdOrCtrl+N"))?,
-                    &MenuItem::with_id(app, "organize", "Organize Pads", true, Some("CmdOrCtrl+Shift+O"))?,
-                    &PredefinedMenuItem::separator(app)?,
-                    &MenuItem::with_id(app, "lobby", "Multiplayer...", true, Some("CmdOrCtrl+Shift+M"))?,
-                    &PredefinedMenuItem::separator(app)?,
-                    &MenuItem::with_id(app, "clear_all", "Clear All Pads", true, None::<&str>)?,
-                ],
-            )?;
+                let file_submenu = Submenu::with_items(
+                    app,
+                    "File",
+                    true,
+                    &[
+                        &MenuItem::with_id(app, "new_pad", "New Pad", true, Some("CmdOrCtrl+N"))?,
+                        &MenuItem::with_id(app, "organize", "Organize Pads", true, Some("CmdOrCtrl+Shift+O"))?,
+                        &PredefinedMenuItem::separator(app)?,
+                        &MenuItem::with_id(app, "lobby", "Multiplayer...", true, Some("CmdOrCtrl+Shift+M"))?,
+                        &PredefinedMenuItem::separator(app)?,
+                        &MenuItem::with_id(app, "clear_all", "Clear All Pads", true, None::<&str>)?,
+                    ],
+                )?;
 
-            let edit_submenu = Submenu::with_items(
-                app,
-                "Edit",
-                true,
-                &[
-                    &PredefinedMenuItem::undo(app, None)?,
-                    &PredefinedMenuItem::redo(app, None)?,
-                    &PredefinedMenuItem::separator(app)?,
-                    &PredefinedMenuItem::copy(app, None)?,
-                    &PredefinedMenuItem::paste(app, None)?,
-                    &PredefinedMenuItem::select_all(app, None)?,
-                ],
-            )?;
+                let edit_submenu = Submenu::with_items(
+                    app,
+                    "Edit",
+                    true,
+                    &[
+                        &PredefinedMenuItem::undo(app, None)?,
+                        &PredefinedMenuItem::redo(app, None)?,
+                        &PredefinedMenuItem::separator(app)?,
+                        &PredefinedMenuItem::copy(app, None)?,
+                        &PredefinedMenuItem::paste(app, None)?,
+                        &PredefinedMenuItem::select_all(app, None)?,
+                    ],
+                )?;
 
-            let initial_settings = read_settings();
-            let view_submenu = Submenu::with_items(
-                app,
-                "View",
-                true,
-                &[
-                    &CheckMenuItem::with_id(app, "always_on_top", "Always on Top", true, initial_settings.always_on_top, None::<&str>)?,
-                ],
-            )?;
+                let initial_settings = read_settings();
+                let view_submenu = Submenu::with_items(
+                    app,
+                    "View",
+                    true,
+                    &[
+                        &CheckMenuItem::with_id(app, "always_on_top", "Always on Top", true, initial_settings.always_on_top, None::<&str>)?,
+                    ],
+                )?;
 
-            let menu = Menu::with_items(app, &[&app_submenu, &file_submenu, &edit_submenu, &view_submenu])?;
-            app.set_menu(menu)?;
+                let menu = Menu::with_items(app, &[&app_submenu, &file_submenu, &edit_submenu, &view_submenu])?;
+                app.set_menu(menu)?;
+            }
 
             // Handle menu events
             let handle = app.handle().clone();
@@ -1691,6 +1797,13 @@ pub fn run() {
                 let state = app_handle.state::<NotesState>();
                 sync_windows(&app_handle, &state);
 
+                // Pre-build the command palette window hidden. Windows
+                // webview creation from inside a tauri command silently
+                // hangs in `builder.build()` for label "palette"; doing it
+                // here from the same thread that successfully builds note
+                // windows sidesteps that.
+                ensure_palette_window(&app_handle);
+
                 // Now start the file watcher
                 let handle = app_handle.clone();
                 let mut watcher =
@@ -1698,6 +1811,34 @@ pub fn run() {
                         if let Ok(event) = res {
                             match event.kind {
                                 EventKind::Modify(_) | EventKind::Create(_) => {
+                                    // Filter: the watcher sees the whole notes_dir,
+                                    // which includes aizuchi.log (we write it on
+                                    // every log call), cli-token, cli.port, etc.
+                                    // Those churn constantly and would fire
+                                    // sync_windows dozens of times per interaction
+                                    // — visible as drag glitches and note-window
+                                    // recreates. Only proceed if at least one
+                                    // changed path is a file we actually care
+                                    // about.
+                                    let is_relevant = event.paths.iter().any(|p| {
+                                        let name = p
+                                            .file_name()
+                                            .and_then(|n| n.to_str())
+                                            .unwrap_or("");
+                                        name == "notes.json"
+                                            || name == "remote-notes.json"
+                                            || name == "highlights.json"
+                                            || name == "subscriptions.json"
+                                            || name == "room-code.json"
+                                            || name == "room-result.json"
+                                            || name == ".organize"
+                                            || name == ".show-logs"
+                                            || name.starts_with(".share-")
+                                            || name.starts_with(".retract-")
+                                    });
+                                    if !is_relevant {
+                                        return;
+                                    }
                                     // Small debounce to avoid rapid re-reads
                                     thread::sleep(Duration::from_millis(100));
 

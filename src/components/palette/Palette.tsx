@@ -154,7 +154,13 @@ export function Palette() {
 	const mainRowRefs = useRef(new Map<number, HTMLElement | null>());
 	const browseRowRefs = useRef(new Map<number, HTMLElement | null>());
 
-	const beginClose = () => setIsOpen(false);
+	const beginClose = () => {
+		setIsOpen(false);
+		// Hide the window in parallel with the exit animation rather than
+		// waiting for `onExitComplete`, so the close feels instant. React
+		// still unmounts the motion.div cleanly on the next render.
+		invoke("close_palette").catch(() => {});
+	};
 
 	const refreshMeetings = useCallback(async () => {
 		try {
@@ -243,12 +249,13 @@ export function Palette() {
 	}, [browseSelectedIdx, view]);
 
 	useEffect(() => {
+		if (!isOpen) return;
 		if (view === "main") {
 			inputRef.current?.focus();
 		} else {
 			browseInputRef.current?.focus();
 		}
-	}, [view]);
+	}, [view, isOpen]);
 
 	// Prevent scrollbar flash during the slide-up animation
 	useEffect(() => {
@@ -259,13 +266,63 @@ export function Palette() {
 		};
 	}, []);
 
-	// biome-ignore lint/correctness/useExhaustiveDependencies: beginClose only calls the stable setIsOpen setter; re-subscribing on every render would needlessly tear down the focus listener
+	// Document-level Escape handler — input-scoped handlers (in `onMainKeyDown`
+	// / `onBrowseKeyDown`) only fire when the input has focus, which isn't
+	// always the case after a click on the list. This catches Escape regardless.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: beginClose only flips a stable setter
+	useEffect(() => {
+		const onKeyDown = (e: KeyboardEvent) => {
+			if (e.key === "Escape") {
+				e.preventDefault();
+				beginClose();
+			}
+		};
+		document.addEventListener("keydown", onKeyDown);
+		return () => document.removeEventListener("keydown", onKeyDown);
+	}, []);
+
+	// Ctrl+W / programmatic close: Rust intercepts the OS close request and
+	// emits this event so React can play the same exit animation as Escape.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: beginClose only flips a stable setter
+	useEffect(() => {
+		const win = getCurrentWindow();
+		const unlisten = win.listen("palette-close-request", () => {
+			beginClose();
+		});
+		return () => {
+			unlisten.then((fn) => fn()).catch(() => {});
+		};
+	}, []);
+
+	// Close on blur — picker-aware so file dialogs don't trip it. Open is
+	// driven explicitly by the `palette-open-request` event from Rust, not by
+	// focus, so that clicking the (possibly residual) window doesn't re-open
+	// the menu unexpectedly.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: beginClose only flips a stable setter
 	useEffect(() => {
 		const win = getCurrentWindow();
 		const unlisten = win.onFocusChanged(({ payload: focused }) => {
-			// While the file picker is open the palette would otherwise
-			// auto-close on blur; keep it visible until the dialog returns.
 			if (!focused && !importingRef.current) beginClose();
+		});
+		return () => {
+			unlisten.then((fn) => fn()).catch(() => {});
+		};
+	}, []);
+
+	// Open signal from Rust (`open_palette_window` emits this after .show()).
+	// Reset state and mount the UI here, rather than reacting to focus, so
+	// that the palette only opens via an explicit Ctrl+K invoke.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: setters are stable
+	useEffect(() => {
+		const win = getCurrentWindow();
+		const unlisten = win.listen("palette-open-request", () => {
+			setQuery("");
+			setBrowseQuery("");
+			setView("main");
+			setSelectedIdx(0);
+			setBrowseSelectedIdx(0);
+			setConfirmingDeleteId(null);
+			setIsOpen(true);
 		});
 		return () => {
 			unlisten.then((fn) => fn()).catch(() => {});
@@ -487,11 +544,7 @@ export function Palette() {
 	};
 
 	return (
-		<AnimatePresence
-			onExitComplete={() => {
-				invoke("close_palette").catch(() => {});
-			}}
-		>
+		<AnimatePresence>
 			{isOpen && (
 				<motion.div
 					key="palette"
