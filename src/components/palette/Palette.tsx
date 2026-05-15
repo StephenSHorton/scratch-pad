@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Trash2 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -405,20 +404,19 @@ export function Palette() {
 				"webm",
 				"mkv",
 			];
+			// macOS 26 (Tahoe) workaround: @tauri-apps/plugin-dialog's
+			// open() panics with `+[NSOpenPanel openPanel] returned NULL`
+			// in unsigned dev builds because the view-bridge XPC service
+			// refuses to vend a panel. `pick_import_file` shells out to
+			// osascript's `choose file`, which runs in a separate process
+			// and is unaffected.
 			importingRef.current = true;
-			openDialog({
-				multiple: false,
-				directory: false,
+			invoke<string | null>("pick_import_file", {
+				extensions: ["txt", "md", "json", ...audioVideoExts],
 				title: "Import meeting (transcript or recording)",
-				filters: [
-					{
-						name: "Transcript or recording",
-						extensions: ["txt", "md", "json", ...audioVideoExts],
-					},
-				],
 			})
 				.then((selected) => {
-					if (typeof selected !== "string") return undefined;
+					if (typeof selected !== "string" || !selected) return undefined;
 					const lower = selected.toLowerCase();
 					const isAudioVideo = audioVideoExts.some((ext) =>
 						lower.endsWith(`.${ext}`),

@@ -24,6 +24,56 @@ pub const MODEL_URL: &str =
 pub const MODEL_FILENAME: &str = "ggml-small.en-tdrz.bin";
 use hound::{SampleFormat as HoundSampleFormat, WavSpec, WavWriter};
 
+/// Triggers the macOS microphone permission prompt and waits for the user's
+/// response. Without this, cpal opens the input stream successfully but the
+/// OS silently pipes zeros — there's no error, just dead audio. On Tahoe
+/// (macOS 26) the prompt is not automatically shown for unsigned dev builds
+/// when cpal opens a stream; an explicit `AVCaptureDevice.requestAccess` is
+/// required to register the app with TCC and surface the dialog.
+#[cfg(target_os = "macos")]
+pub fn ensure_microphone_access() -> Result<(), String> {
+    use objc2::runtime::Bool;
+    use objc2_av_foundation::{AVAuthorizationStatus, AVCaptureDevice, AVMediaTypeAudio};
+
+    let media_type = unsafe { AVMediaTypeAudio }
+        .ok_or_else(|| "AVMediaTypeAudio not available".to_string())?;
+    let status = unsafe { AVCaptureDevice::authorizationStatusForMediaType(media_type) };
+
+    match status {
+        AVAuthorizationStatus::Authorized => Ok(()),
+        AVAuthorizationStatus::NotDetermined => {
+            let (tx, rx) = std::sync::mpsc::channel::<bool>();
+            let block = block2::RcBlock::new(move |granted: Bool| {
+                let _ = tx.send(granted.as_bool());
+            });
+            unsafe {
+                AVCaptureDevice::requestAccessForMediaType_completionHandler(
+                    media_type, &block,
+                );
+            }
+            match rx.recv_timeout(Duration::from_secs(60)) {
+                Ok(true) => Ok(()),
+                Ok(false) => Err(
+                    "Microphone access was denied. Enable it in System Settings → Privacy & Security → Microphone.".to_string(),
+                ),
+                Err(_) => Err("Microphone permission request timed out.".to_string()),
+            }
+        }
+        AVAuthorizationStatus::Denied => Err(
+            "Microphone access is denied. Open System Settings → Privacy & Security → Microphone and enable Aizuchi.".to_string(),
+        ),
+        AVAuthorizationStatus::Restricted => Err(
+            "Microphone access is restricted by system policy.".to_string(),
+        ),
+        _ => Err("Microphone access not granted.".to_string()),
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn ensure_microphone_access() -> Result<(), String> {
+    Ok(())
+}
+
 /// Records from the system default input device for `duration_secs` and
 /// writes a 16-bit PCM WAV to `output_path`. Blocks the calling thread.
 /// `on_level` is invoked once per audio buffer with a 0..1 peak amplitude —
@@ -917,12 +967,16 @@ where
     let device = host
         .default_input_device()
         .ok_or_else(|| "No default input device available".to_string())?;
+    let device_name = device.name().unwrap_or_else(|_| "<unknown>".to_string());
     let supported = device
         .default_input_config()
         .map_err(|e| format!("Failed to query input config: {e}"))?;
     let sample_rate = supported.sample_rate().0;
     let channels = supported.channels();
     let sample_format = supported.sample_format();
+    crate::log(&format!(
+        "[live-capture] device='{device_name}' sr={sample_rate} ch={channels} fmt={sample_format:?}"
+    ));
     let stream_config: cpal::StreamConfig = supported.into();
 
     let stop_flag = Arc::new(AtomicBool::new(false));
@@ -941,6 +995,9 @@ where
             SampleFormat::F32 => {
                 let buf_cb = capture_buf.clone();
                 let level_cb = capture_level.clone();
+                let frames_per_log = sample_rate as usize; // ~1s of audio per frame
+                let mut frames_seen: usize = 0;
+                let mut window_peak: f32 = 0.0;
                 device.build_input_stream(
                     &stream_config,
                     move |data: &[f32], _: &cpal::InputCallbackInfo| {
@@ -965,6 +1022,18 @@ where
                                 }
                             }
                         }
+                        if peak > window_peak {
+                            window_peak = peak;
+                        }
+                        let frames_this_chunk = data.len() / channels.max(1) as usize;
+                        frames_seen += frames_this_chunk;
+                        if frames_seen >= frames_per_log {
+                            crate::log(&format!(
+                                "[live-capture] peak last ~1s = {window_peak:.4} (samples={frames_seen})"
+                            ));
+                            frames_seen = 0;
+                            window_peak = 0.0;
+                        }
                         level_cb(peak.min(1.0));
                     },
                     err_fn,
@@ -974,6 +1043,9 @@ where
             SampleFormat::I16 => {
                 let buf_cb = capture_buf.clone();
                 let level_cb = capture_level.clone();
+                let frames_per_log = sample_rate as usize;
+                let mut frames_seen: usize = 0;
+                let mut window_peak: f32 = 0.0;
                 device.build_input_stream(
                     &stream_config,
                     move |data: &[i16], _: &cpal::InputCallbackInfo| {
@@ -1003,7 +1075,20 @@ where
                                 }
                             }
                         }
-                        level_cb(peak as f32 / i16::MAX as f32);
+                        let peak_f32 = peak as f32 / i16::MAX as f32;
+                        if peak_f32 > window_peak {
+                            window_peak = peak_f32;
+                        }
+                        let frames_this_chunk = data.len() / channels.max(1) as usize;
+                        frames_seen += frames_this_chunk;
+                        if frames_seen >= frames_per_log {
+                            crate::log(&format!(
+                                "[live-capture] peak last ~1s = {window_peak:.4} (samples={frames_seen})"
+                            ));
+                            frames_seen = 0;
+                            window_peak = 0.0;
+                        }
+                        level_cb(peak_f32);
                     },
                     err_fn,
                     None,

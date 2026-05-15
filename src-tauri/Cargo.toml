@@ -63,7 +63,9 @@ subtle = "2"
 getrandom = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2-foundation = { version = "0.3", features = ["NSNotification", "NSOperation"] }
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSNotification", "NSOperation", "NSString"] }
 objc2-app-kit = { version = "0.3", features = ["NSApplication"] }
+objc2-av-foundation = { version = "0.3", features = ["AVCaptureDevice", "AVMediaFormat"] }
 block2 = "0.6"
 
