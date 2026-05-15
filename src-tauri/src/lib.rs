@@ -765,6 +765,56 @@ fn log_from_frontend(msg: String) {
     log(&format!("[frontend] {msg}"));
 }
 
+/// Workaround for `+[NSOpenPanel openPanel]` returning NULL on macOS 26
+/// (Tahoe) for unsigned dev builds: the in-process view-bridge XPC
+/// service refuses to vend a panel, so `tauri-plugin-dialog`'s `open()`
+/// panics. Shell out to `osascript`'s `choose file` instead — it runs
+/// in a separate process with its own view-bridge connection and is
+/// unaffected. Returns `Ok(None)` if the user cancels.
+#[tauri::command]
+fn pick_import_file(extensions: Vec<String>, title: Option<String>) -> Result<Option<String>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let prompt = title.unwrap_or_else(|| "Choose a file".to_string());
+        let type_list = extensions
+            .iter()
+            .map(|e| format!("\"{}\"", e.replace('"', "")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let script = if type_list.is_empty() {
+            format!("POSIX path of (choose file with prompt \"{}\")", prompt.replace('"', "\\\""))
+        } else {
+            format!(
+                "POSIX path of (choose file with prompt \"{}\" of type {{{}}})",
+                prompt.replace('"', "\\\""),
+                type_list
+            )
+        };
+        let output = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(&script)
+            .output()
+            .map_err(|e| format!("failed to launch osascript: {e}"))?;
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if path.is_empty() {
+                return Ok(None);
+            }
+            return Ok(Some(path));
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("-128") || stderr.to_lowercase().contains("user canceled") {
+            return Ok(None);
+        }
+        Err(format!("osascript failed: {stderr}"))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (extensions, title);
+        Err("pick_import_file is only implemented on macOS".to_string())
+    }
+}
+
 /// AIZ-30 — palette flow. Reads a user-selected file off disk, parses it
 /// as a transcript, and stages the chunks for the freshly-opened meeting
 /// window. The path is whatever the dialog plugin returned; we trust it
@@ -829,6 +879,15 @@ async fn start_live_capture(
             return Err("Live capture already running".into());
         }
     }
+
+    // macOS Tahoe (26) + unsigned dev builds: cpal will happily open a stream
+    // even when TCC has not authorized microphone access; the OS just pipes
+    // zeros. Trigger the permission prompt explicitly via AVCaptureDevice so
+    // the user actually sees the dialog and the app gets registered in
+    // Privacy & Security → Microphone. Blocks until the user responds.
+    tauri::async_runtime::spawn_blocking(audio::ensure_microphone_access)
+        .await
+        .map_err(|e| format!("Microphone permission task failed: {e}"))??;
 
     let model_path = notes_dir().join("models").join(audio::MODEL_FILENAME);
     open_recording_session_window(&app);
@@ -1540,7 +1599,37 @@ pub(crate) fn sync_windows(app: &AppHandle, state: &NotesState) {
 // ---------------------------------------------------------------------------
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+fn install_panic_hook() {
+    let prev = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "<unknown>".to_string());
+        let payload = info
+            .payload()
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| {
+                info.payload()
+                    .downcast_ref::<String>()
+                    .map(|s| s.as_str())
+            })
+            .unwrap_or("<non-string panic payload>");
+        let thread = std::thread::current()
+            .name()
+            .unwrap_or("<unnamed>")
+            .to_string();
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        log(&format!(
+            "PANIC thread={thread} at {location}: {payload}\nbacktrace:\n{backtrace}"
+        ));
+        prev(info);
+    }));
+}
+
 pub fn run() {
+    install_panic_hook();
     let app = tauri::Builder::default()
         .manage(NotesState {
             notes: Mutex::new(vec![]),
@@ -1603,6 +1692,7 @@ pub fn run() {
             delete_meeting,
             open_meeting,
             take_pending_import,
+            pick_import_file,
             import_meeting_from_path,
             import_audio_meeting_from_path,
             cancel_audio_import,
